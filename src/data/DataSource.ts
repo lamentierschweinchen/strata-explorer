@@ -33,7 +33,7 @@ export interface ValidatorInfo {
 
 export interface TransactionInfo {
   signature: string;
-  type: 'transfer' | 'program' | 'token' | 'defi';
+  type: 'transfer' | 'defi' | 'nft' | 'stake';
   value: number;
 }
 

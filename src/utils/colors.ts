@@ -9,9 +9,9 @@ export const COLORS = {
 
   // Transaction types
   TX_TRANSFER: new THREE.Color(1.0, 0.85, 0.4),       // gold
-  TX_PROGRAM: new THREE.Color(0.3, 0.85, 1.0),        // cyan
-  TX_TOKEN: new THREE.Color(0.85, 0.4, 1.0),          // purple
-  TX_DEFI: new THREE.Color(0.3, 1.0, 0.6),            // green
+  TX_DEFI: new THREE.Color(0.3, 0.85, 1.0),           // cyan
+  TX_NFT: new THREE.Color(0.85, 0.4, 1.0),            // purple
+  TX_STAKE: new THREE.Color(0.3, 1.0, 0.6),           // green
 
   // Crystal axis
   CRYSTAL_CORE: new THREE.Color(0.9, 0.92, 1.0),      // white-silver
@@ -30,14 +30,30 @@ export const COLORS = {
 } as const;
 
 /** Get transaction color by type */
-export function getTxColor(type: 'transfer' | 'program' | 'token' | 'defi'): THREE.Color {
+export function getTxColor(type: 'transfer' | 'defi' | 'nft' | 'stake'): THREE.Color {
   switch (type) {
     case 'transfer': return COLORS.TX_TRANSFER;
-    case 'program': return COLORS.TX_PROGRAM;
-    case 'token': return COLORS.TX_TOKEN;
     case 'defi': return COLORS.TX_DEFI;
+    case 'nft': return COLORS.TX_NFT;
+    case 'stake': return COLORS.TX_STAKE;
   }
 }
+
+/** Display names for transaction types */
+export const TX_TYPE_DISPLAY: Record<string, string> = {
+  transfer: 'Transfer',
+  defi: 'DeFi Swap',
+  nft: 'NFT Mint',
+  stake: 'Stake',
+};
+
+/** Hex colors for transaction types (used in DOM elements) */
+export const TX_TYPE_HEX: Record<string, string> = {
+  transfer: '#ffd700',
+  defi: '#00e5ff',
+  nft: '#aa66ff',
+  stake: '#4cd964',
+};
 
 /** Get validator color based on commission (0-10) */
 export function getCommissionColor(commission: number): THREE.Color {

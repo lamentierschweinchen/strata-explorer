@@ -194,9 +194,9 @@ export class MockSolanaData implements SolanaDataSource {
         const roll = this.rng();
         let type: TransactionInfo['type'];
         if (roll < 0.4) type = 'transfer';
-        else if (roll < 0.7) type = 'program';
-        else if (roll < 0.9) type = 'token';
-        else type = 'defi';
+        else if (roll < 0.7) type = 'defi';
+        else if (roll < 0.9) type = 'nft';
+        else type = 'stake';
 
         transactions.push({
           signature: randomBase58(this.rng, 88),
