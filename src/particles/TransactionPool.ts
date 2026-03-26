@@ -13,11 +13,12 @@ interface TxParticle {
   color: THREE.Color;
   size: number;
   active: boolean;
+  type: string;
 }
 
 /**
- * Object pool for transaction particles. Particles spawn at the outer
- * edge of the validator cloud and drift inward toward the current leader.
+ * Object pool for transaction particles. Particles spawn at the current
+ * leader's position and drift inward toward the crystal growth point.
  * On arrival, they flash and deactivate.
  */
 export class TransactionPool {
@@ -62,6 +63,7 @@ export class TransactionPool {
         color: new THREE.Color(),
         size: 0,
         active: false,
+        type: '',
       });
     }
 
@@ -86,27 +88,25 @@ export class TransactionPool {
   }
 
   /**
-   * Spawn a transaction particle from a random point on the outer cylinder
-   * toward the current leader's position.
+   * Spawn a transaction particle from the leader's position
+   * toward the crystal growth point.
    */
-  spawn(tx: TransactionInfo, leaderPos: THREE.Vector3): void {
+  spawn(tx: TransactionInfo, leaderPos: THREE.Vector3, crystalTarget: THREE.Vector3): void {
     const slot = this.findSlot();
     const p = this.particles[slot];
 
-    // Random point on outer cylinder surface
-    const theta = this.rng() * Math.PI * 2;
-    const y = (this.rng() - 0.5) * CONFIG.CLOUD_HEIGHT * 0.6;
-    const r = CONFIG.PARTICLE_SPAWN_RADIUS;
+    // Spawn near leader with slight random spread
     p.startPos.set(
-      Math.cos(theta) * r,
-      y,
-      Math.sin(theta) * r,
+      leaderPos.x + (this.rng() - 0.5) * 10,
+      leaderPos.y + (this.rng() - 0.5) * 6,
+      leaderPos.z + (this.rng() - 0.5) * 10,
     );
-    p.endPos.copy(leaderPos);
+    p.endPos.copy(crystalTarget);
 
     p.age = 0;
     p.lifetime = CONFIG.PARTICLE_LIFETIME;
     p.active = true;
+    p.type = tx.type;
 
     // Color by type
     p.color.copy(getTxColor(tx.type));
@@ -116,6 +116,26 @@ export class TransactionPool {
     const valueFactor = Math.min(Math.max((logValue + 3) / 6, 0), 1); // -3 to 3 → 0 to 1
     p.size = 2.5 + valueFactor * 4.0;
     p.brightness = 0.6 + valueFactor * 0.4;
+  }
+
+  /** Dim particles that don't match the active filter type */
+  applyFilter(filterType: string): void {
+    for (let i = 0; i < CONFIG.MAX_PARTICLES; i++) {
+      const p = this.particles[i];
+      if (!p.active) continue;
+      const i3 = i * 3;
+
+      if (filterType === 'all' || p.type === filterType) {
+        this.colors[i3] = p.color.r;
+        this.colors[i3 + 1] = p.color.g;
+        this.colors[i3 + 2] = p.color.b;
+      } else {
+        this.colors[i3] = p.color.r * 0.1;
+        this.colors[i3 + 1] = p.color.g * 0.1;
+        this.colors[i3 + 2] = p.color.b * 0.1;
+      }
+    }
+    (this.geometry.getAttribute('aColor') as THREE.BufferAttribute).needsUpdate = true;
   }
 
   private findSlot(): number {
