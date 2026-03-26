@@ -7,8 +7,8 @@ export const CONFIG = {
 
   // Crystal axis
   MAX_SEGMENTS: 200,
-  SEGMENT_HEIGHT: 0.8,
-  CRYSTAL_RADIUS: 6,
+  SEGMENT_HEIGHT: 1.5,
+  CRYSTAL_RADIUS: 8,
   CRYSTAL_SUBDIVISIONS: 32,
   FINALITY_DEPTH: 30, // segments behind current that are "crystallizing"
 
