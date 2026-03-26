@@ -45,12 +45,12 @@ export const mineralVertexShader = /* glsl */ `
       float waveRadius = uWaveTimes[i] * uWaveSpeed;
       float proximity = exp(-pow(dist - waveRadius, 2.0) / 16.0);
       float fade = 1.0 - smoothstep(0.0, uWaveLifetime, uWaveTimes[i]);
-      waveBump += proximity * fade * 0.6;
+      waveBump += proximity * fade * 0.25;
     }
 
     // Combine brightness sources
     vBrightness = aBrightness * shimmer
-                + aLeaderPulse * 1.2
+                + aLeaderPulse * 0.8
                 + aVotePulse * 0.3
                 + aUpcomingLeader * 0.4
                 + waveBump;

@@ -8,8 +8,8 @@ export const CONFIG = {
   // Crystal axis
   MAX_SEGMENTS: 200,
   SEGMENT_HEIGHT: 1.5,
-  CRYSTAL_RADIUS: 8,
-  CRYSTAL_SUBDIVISIONS: 32,
+  CRYSTAL_RADIUS: 16,
+  CRYSTAL_SUBDIVISIONS: 6,
   FINALITY_DEPTH: 30, // segments behind current that are "crystallizing"
 
   // Timing
@@ -18,8 +18,8 @@ export const CONFIG = {
 
   // Seismic waves
   MAX_WAVES: 4,
-  WAVE_SPEED: 200, // units per second
-  WAVE_LIFETIME: 0.8, // seconds
+  WAVE_SPEED: 120, // units per second
+  WAVE_LIFETIME: 1.5, // seconds
   WAVE_RING_WIDTH: 4.0,
 
   // Transaction particles
@@ -42,9 +42,9 @@ export const CONFIG = {
   DUST_SPREAD: 300,
 
   // Post-processing
-  BLOOM_STRENGTH: 0.8,
-  BLOOM_RADIUS: 0.4,
-  BLOOM_THRESHOLD: 0.3,
+  BLOOM_STRENGTH: 0.35,
+  BLOOM_RADIUS: 0.3,
+  BLOOM_THRESHOLD: 0.7,
 
   // Breathing
   BREATH_PERIOD: 8, // seconds

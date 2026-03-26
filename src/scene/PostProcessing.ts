@@ -72,7 +72,7 @@ export class PostProcessing {
       uniforms: {
         tDiffuse: { value: null },
         uTime: { value: 0 },
-        uIntensity: { value: 0.5 },
+        uIntensity: { value: 0.25 },
       },
       vertexShader: filmGrainVertexShader,
       fragmentShader: filmGrainFragmentShader,
@@ -83,7 +83,7 @@ export class PostProcessing {
     this.caPass = new ShaderPass({
       uniforms: {
         tDiffuse: { value: null },
-        uIntensity: { value: 1.5 },
+        uIntensity: { value: 0.8 },
         uResolution: { value: new THREE.Vector2(width, height) },
       },
       vertexShader: chromaticAberrationVertexShader,

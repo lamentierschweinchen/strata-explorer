@@ -37,7 +37,7 @@ export const waveFragmentShader = /* glsl */ `
       // Fade with age
       float fade = 1.0 - smoothstep(0.0, uWaveLifetime, uWaveTimes[i]);
 
-      totalIntensity += ring * fade * 0.4;
+      totalIntensity += ring * fade * 0.15;
     }
 
     if (totalIntensity < 0.001) discard;

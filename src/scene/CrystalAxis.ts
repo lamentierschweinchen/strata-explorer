@@ -114,6 +114,8 @@ export class CrystalAxis {
       uniforms: {
         uScrollOffset: { value: 0 },
         uTime: { value: 0 },
+        uGrowthPointY: { value: 0 },
+        uFinalityHeight: { value: CONFIG.FINALITY_DEPTH * CONFIG.SEGMENT_HEIGHT },
       },
       transparent: true,
       depthWrite: true,
@@ -169,6 +171,7 @@ export class CrystalAxis {
     // Update scroll offset so the growth point stays centered
     this.scrollOffset = -(this.segmentCount - CONFIG.FINALITY_DEPTH * 0.5) * CONFIG.SEGMENT_HEIGHT;
     this.material.uniforms.uScrollOffset.value = this.scrollOffset;
+    this.material.uniforms.uGrowthPointY.value = this.getGrowthPointY();
 
     // Update draw range
     const visibleSegments = Math.min(this.segmentCount, this.maxSegments);
@@ -207,7 +210,7 @@ export class CrystalAxis {
 
       // Decay flash
       if (this.flashes[baseVert] > 0.001) {
-        const newFlash = this.flashes[baseVert] * Math.exp(-dt * 12.0); // ~80ms half-life
+        const newFlash = this.flashes[baseVert] * Math.exp(-dt * 3.0); // ~230ms half-life
         for (let i = 0; i < this.vertsPerSegment; i++) {
           this.flashes[baseVert + i] = newFlash < 0.001 ? 0 : newFlash;
         }

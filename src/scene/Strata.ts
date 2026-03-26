@@ -5,12 +5,17 @@ import { COLORS } from '../utils/colors';
 import { ValidatorCloud } from './ValidatorCloud';
 import { CrystalAxis } from './CrystalAxis';
 import { SeismicWave } from './SeismicWave';
+import { LeaderBeam } from './LeaderBeam';
 import { Background } from './Background';
 import { PostProcessing } from './PostProcessing';
 import { TransactionPool } from '../particles/TransactionPool';
 import { CameraController } from '../interaction/CameraController';
 import { HUD } from '../interaction/HUD';
 import { AudioController } from '../interaction/AudioController';
+import { Raycaster } from '../interaction/Raycaster';
+import { Tooltip } from '../interaction/Tooltip';
+import { InfoOverlay } from '../interaction/InfoOverlay';
+import { Legend } from '../interaction/Legend';
 
 export class Strata {
   private renderer: THREE.WebGLRenderer;
@@ -23,6 +28,7 @@ export class Strata {
   private validatorCloud: ValidatorCloud;
   private crystalAxis: CrystalAxis;
   private seismicWave: SeismicWave;
+  private leaderBeam: LeaderBeam;
   private transactionPool: TransactionPool;
   private background: Background;
   private postProcessing: PostProcessing;
@@ -31,11 +37,16 @@ export class Strata {
   private cameraController: CameraController;
   private hud: HUD;
   private audioController: AudioController;
+  private raycaster: Raycaster;
+  private tooltip: Tooltip;
+  private infoOverlay: InfoOverlay;
+  private legend: Legend;
 
   // TPS tracking
   private txCountThisSecond = 0;
   private tpsTimer = 0;
   private currentTps = 0;
+  private lastFilter = 'all';
 
   static async create(container: HTMLElement, dataSource: SolanaDataSource): Promise<Strata> {
     await dataSource.initialize();
@@ -92,6 +103,11 @@ export class Strata {
     this.seismicWave = new SeismicWave();
     this.scene.add(this.seismicWave.mesh);
 
+    // Leader Beam
+    this.leaderBeam = new LeaderBeam();
+    this.scene.add(this.leaderBeam.mesh);
+    this.scene.add(this.leaderBeam.upcoming);
+
     // Transaction Particles
     this.transactionPool = new TransactionPool();
     this.scene.add(this.transactionPool.points);
@@ -105,6 +121,30 @@ export class Strata {
 
     // Audio
     this.audioController = new AudioController();
+
+    // Raycaster + Tooltip
+    this.tooltip = new Tooltip();
+    this.raycaster = new Raycaster(this.camera, this.renderer.domElement, this.validatorCloud.points);
+
+    this.raycaster.onHover = (index: number) => {
+      const v = this.dataSource.getValidator(index);
+      const mouseClient = this.raycaster.getMouseClient();
+      if (v && mouseClient) {
+        this.tooltip.setContext(this.dataSource.getCurrentSlot(), this.dataSource.getCurrentLeader());
+        this.tooltip.show(v, mouseClient.x, mouseClient.y);
+      }
+    };
+    this.raycaster.onHoverEnd = () => {
+      this.tooltip.hide();
+    };
+    this.raycaster.onClick = (index: number) => {
+      const pos = this.validatorCloud.getPosition(index);
+      this.cameraController.zoomToValidator(pos);
+    };
+
+    // Info Overlay + Legend
+    this.infoOverlay = new InfoOverlay();
+    this.legend = new Legend();
 
     // Start data source and wire callbacks
     this.dataSource.start({
@@ -121,6 +161,21 @@ export class Strata {
         this.validatorCloud.setLeader(leader);
         const upcoming = this.dataSource.getUpcomingLeaders(4);
         this.validatorCloud.setUpcomingLeaders(upcoming);
+
+        // Leader beam
+        const leaderIdx = this.dataSource.getCurrentLeaderIndex();
+        const leaderPos = this.validatorCloud.getPosition(leaderIdx);
+        this.leaderBeam.setLeader(leaderPos, this.crystalAxis.getGrowthPointY());
+
+        // Upcoming leader beams
+        const upcomingIndices = this.dataSource.getUpcomingLeaderIndices(4);
+        const upcomingPositions = upcomingIndices.map(i => this.validatorCloud.getPosition(i));
+        this.leaderBeam.setUpcoming(upcomingPositions, this.crystalAxis.getGrowthPointY());
+
+        // Info overlay — leader label
+        const leaderInfo = this.dataSource.getValidator(leaderIdx);
+        const leaderName = leaderInfo?.name ?? `Validator #${leaderIdx}`;
+        this.infoOverlay.setLeader(leaderName, leaderPos);
 
         // Vote pulse
         const allValidators = this.dataSource.getValidators();
@@ -141,12 +196,14 @@ export class Strata {
       onTransactions: (txs) => {
         const leaderIdx = this.dataSource.getCurrentLeaderIndex();
         const leaderPos = this.validatorCloud.getPosition(leaderIdx);
+        const crystalTarget = new THREE.Vector3(0, this.crystalAxis.getGrowthPointY(), 0);
 
         for (const tx of txs) {
-          this.transactionPool.spawn(tx, leaderPos);
+          this.transactionPool.spawn(tx, leaderPos, crystalTarget);
         }
 
         this.txCountThisSecond += txs.length;
+        this.infoOverlay.pushTransactions(txs);
       },
 
       onRootAdvance: (_rootSlot) => {
@@ -167,13 +224,23 @@ export class Strata {
 
     // Update all visual subsystems
     this.cameraController.update(dt);
+    this.raycaster.update(this.camera);
     this.crystalAxis.update(dt);
     this.validatorCloud.update(dt);
     this.seismicWave.update(dt);
+    this.leaderBeam.update(dt, this.crystalAxis.getGrowthPointY(), this.camera);
     this.transactionPool.update(dt);
     this.background.update(dt);
     this.postProcessing.update(dt);
     this.hud.update(dt);
+    this.infoOverlay.update(dt, this.camera, this.renderer.domElement);
+
+    // Filter sync — apply particle dimming when filter changes
+    const filter = this.infoOverlay.getActiveFilter();
+    if (filter !== this.lastFilter) {
+      this.transactionPool.applyFilter(filter);
+      this.lastFilter = filter;
+    }
 
     // Pass seismic wave data to validator cloud
     const waveData = this.seismicWave.getActiveWaves();
@@ -198,10 +265,15 @@ export class Strata {
     this.validatorCloud.dispose();
     this.crystalAxis.dispose();
     this.seismicWave.dispose();
+    this.leaderBeam.dispose();
     this.transactionPool.dispose();
     this.background.dispose();
     this.postProcessing.dispose();
     this.cameraController.dispose();
+    this.raycaster.dispose();
+    this.tooltip.dispose();
+    this.infoOverlay.dispose();
+    this.legend.dispose();
     this.hud.dispose();
     this.audioController.dispose();
     this.renderer.dispose();

@@ -12,20 +12,28 @@ export const crystalVertexShader = /* glsl */ `
   varying float vAge;
   varying float vFlash;
   varying float vMissed;
+  varying float vWorldY;
 
   uniform float uScrollOffset;
   uniform float uTime;
+  uniform float uGrowthPointY;
+  uniform float uFinalityHeight;
 
   void main() {
     vNormal = normalize(normalMatrix * normal);
     vUv = uv;
-    vAge = aSegmentAge;
     vFlash = aFlash;
     vMissed = aMissed;
 
     // Apply scroll offset to Y
     vec3 scrolledPos = position;
     scrolledPos.y += uScrollOffset;
+    vWorldY = scrolledPos.y;
+
+    // Compute smooth continuous age from Y position
+    // Growth point is at top (age=0), finality depth below is age=1
+    float distFromTop = uGrowthPointY - scrolledPos.y;
+    vAge = clamp(distFromTop / uFinalityHeight, 0.0, 1.0);
 
     vec4 mvPosition = modelViewMatrix * vec4(scrolledPos, 1.0);
     vViewPosition = -mvPosition.xyz;
@@ -40,6 +48,7 @@ export const crystalFragmentShader = /* glsl */ `
   varying float vAge;
   varying float vFlash;
   varying float vMissed;
+  varying float vWorldY;
 
   uniform float uTime;
 
@@ -95,54 +104,70 @@ export const crystalFragmentShader = /* glsl */ `
     float surfaceNoise = fbm(noiseCoord) * (0.3 - finalizedFactor * 0.25);
 
     // Core brightness: young = bright, finalized = dim
-    float coreBrightness = pow(max(NdotV, 0.0), 0.6);
-    float emissive = youngFactor * 0.8 + settingFactor * 0.3 + finalizedFactor * 0.05;
+    float coreBrightness = pow(max(NdotV, 0.0), 0.8);
+    float emissive = youngFactor * 0.35 + settingFactor * 0.2 + finalizedFactor * 0.04;
 
-    // Colors
-    vec3 youngColor = vec3(0.7, 0.85, 1.0);    // soft blue glow
-    vec3 settingColor = vec3(0.5, 0.55, 0.7);   // dimming blue-grey
-    vec3 finalizedColor = vec3(0.12, 0.1, 0.18); // dark bedrock
-    vec3 coreWhite = vec3(1.0, 0.98, 0.95);
+    // Colors — crystalline palette, not sterile white
+    vec3 youngColor = vec3(0.45, 0.65, 0.95);    // vivid icy blue
+    vec3 settingColor = vec3(0.35, 0.38, 0.6);   // muted blue-violet
+    vec3 finalizedColor = vec3(0.08, 0.06, 0.14); // deep dark bedrock
+    vec3 coreWhite = vec3(0.85, 0.9, 1.0);        // cool white, not warm
 
     vec3 baseColor = youngColor * youngFactor
                    + settingColor * settingFactor
                    + finalizedColor * finalizedFactor;
 
-    // Mix toward white at core
-    baseColor = mix(baseColor, coreWhite, coreBrightness * youngFactor * 0.5);
-    baseColor += surfaceNoise * 0.15;
+    // Light core tint — only a hint of white, keep crystal color
+    baseColor = mix(baseColor, coreWhite, coreBrightness * youngFactor * 0.2);
 
-    // Fresnel rim glow — stronger on young segments
-    float rimPower = 2.5 + finalizedFactor * 2.0; // sharper rim on old segments
-    float rimGlow = pow(fresnel, rimPower) * (0.8 - finalizedFactor * 0.6);
+    // FBM noise adds visible veins/inclusions
+    float noiseHighlight = surfaceNoise * 0.4;
+    vec3 veinColor = vec3(0.6, 0.75, 1.0);
+    baseColor += veinColor * noiseHighlight * youngFactor;
+    baseColor += vec3(0.15, 0.12, 0.2) * noiseHighlight * finalizedFactor;
 
-    // Prismatic edge refraction on young segments
+    // Fresnel rim glow — colored, not just white
+    float rimPower = 2.0 + finalizedFactor * 2.5;
+    float rimGlow = pow(fresnel, rimPower) * (0.9 - finalizedFactor * 0.7);
+
+    // Prismatic edge refraction — visible across more of the crystal
     vec3 prismatic = vec3(0.0);
-    if (youngFactor > 0.1) {
-      vec3 rainbow = 0.5 + 0.5 * cos(6.2831 * (fresnel * 2.0 + vec3(0.0, 0.33, 0.67)));
-      prismatic = rainbow * pow(fresnel, 3.0) * youngFactor * 0.3;
+    float prismFactor = youngFactor + settingFactor * 0.4;
+    if (prismFactor > 0.05) {
+      float prismAngle = fresnel * 3.0 + vUv.y * 2.0 + uTime * 0.15;
+      vec3 rainbow = 0.5 + 0.5 * cos(6.2831 * (prismAngle + vec3(0.0, 0.33, 0.67)));
+      prismatic = rainbow * pow(fresnel, 2.5) * prismFactor * 0.35;
     }
 
-    // Flash burst on new segment
+    // Flash burst on new segment — subtle warm glow, not blinding white
     vec3 flashColor = vec3(0.0);
     float flashAlpha = 0.0;
     if (vFlash > 0.01) {
-      flashColor = coreWhite * vFlash * 2.0;
-      flashAlpha = vFlash * 0.5;
+      vec3 flashTint = mix(youngColor, coreWhite, 0.5);
+      flashColor = flashTint * vFlash * 0.5;
+      flashAlpha = vFlash * 0.2;
     }
 
+    // Internal energy flow — slow moving light bands using world position
+    float energyFlow = sin(vWorldY * 0.8 - uTime * 1.5) * 0.5 + 0.5;
+    energyFlow *= energyFlow; // sharpen
+    float flowIntensity = energyFlow * youngFactor * 0.15;
+
     // Subtle inner pulse on young segments
-    float pulse = 1.0 + sin(uTime * 4.0 + vUv.y * 10.0) * 0.05 * youngFactor;
+    float pulse = 1.0 + sin(uTime * 3.0 + vUv.y * 8.0) * 0.04 * youngFactor;
 
     // Alpha: young = translucent, finalized = opaque
-    float baseAlpha = youngFactor * 0.35 + settingFactor * 0.6 + finalizedFactor * 0.9;
-    float alpha = (coreBrightness * 0.5 + rimGlow * 0.3 + baseAlpha * 0.5) * pulse + flashAlpha;
+    float baseAlpha = youngFactor * 0.4 + settingFactor * 0.65 + finalizedFactor * 0.92;
+    float alpha = (coreBrightness * 0.4 + rimGlow * 0.25 + baseAlpha * 0.5) * pulse + flashAlpha;
 
     // Final color
-    vec3 finalColor = baseColor * (coreBrightness * 0.6 + emissive) * pulse;
-    finalColor += youngColor * rimGlow * 0.4;
+    vec3 finalColor = baseColor * (coreBrightness * 0.5 + emissive) * pulse;
+    // Rim glow uses the crystal's own color, not white
+    vec3 rimColor = mix(youngColor, vec3(0.5, 0.7, 1.0), 0.5);
+    finalColor += rimColor * rimGlow * 0.35;
     finalColor += prismatic;
     finalColor += flashColor;
+    finalColor += youngColor * flowIntensity;
 
     gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 1.0));
   }

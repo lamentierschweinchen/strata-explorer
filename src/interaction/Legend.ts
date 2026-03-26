@@ -153,7 +153,7 @@ export class Legend {
       } else if (item.symbolGradient) {
         symbolEl.textContent = item.symbol;
         symbolEl.style.background = item.symbolGradient;
-        symbolEl.style.WebkitBackgroundClip = 'text';
+        symbolEl.style.webkitBackgroundClip = 'text';
         symbolEl.style.webkitTextFillColor = 'transparent';
         (symbolEl.style as any).backgroundClip = 'text';
       } else {
