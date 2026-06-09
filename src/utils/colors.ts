@@ -55,9 +55,9 @@ export const TX_TYPE_HEX: Record<string, string> = {
   stake: '#4cd964',
 };
 
-/** Get validator color based on commission (0-10) */
+/** Get validator color based on commission. Accepts 0–100 (real RPC) or 0–10 (mock); saturates at ≥10%. */
 export function getCommissionColor(commission: number): THREE.Color {
-  const t = commission / 10;
+  const t = Math.max(0, Math.min(1, commission / 10));
   const color = new THREE.Color();
   color.lerpColors(COLORS.MINERAL_LOW_COMM, COLORS.MINERAL_HIGH_COMM, t);
   // Blend with base amber
