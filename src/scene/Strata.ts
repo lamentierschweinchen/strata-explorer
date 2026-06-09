@@ -17,6 +17,7 @@ import { Raycaster } from '../interaction/Raycaster';
 import { Tooltip } from '../interaction/Tooltip';
 import { InfoOverlay } from '../interaction/InfoOverlay';
 import { Legend } from '../interaction/Legend';
+import { SimulationEngine } from '../data/SimulationEngine';
 
 export class Strata {
   private renderer: THREE.WebGLRenderer;
@@ -34,6 +35,7 @@ export class Strata {
   private background: Background;
   private starfield: Starfield; // DESIGN LANE
   private postProcessing: PostProcessing;
+  private engine: SimulationEngine; // DATA LANE: pacing (drain queue) + synthetic density fill
 
   // Interaction
   private cameraController: CameraController;
@@ -152,8 +154,19 @@ export class Strata {
     this.infoOverlay = new InfoOverlay();
     this.legend = new Legend();
 
-    // Start data source and wire callbacks
-    this.dataSource.start({
+    // Pacing layer (Data lane's SimulationEngine): real txns are buffered and released evenly,
+    // and visual-only synthetic particles are spawned proportional to real TPS — the latter go
+    // to the particle pool ONLY, never the feed. See src/data/INTEGRATION.md.
+    this.engine = new SimulationEngine({ getTps: () => this.dataSource.getTps?.() ?? 0 });
+    this.engine.onSyntheticParticles = (txs) => {
+      const leaderPos = this.validatorCloud.getPosition(this.dataSource.getCurrentLeaderIndex());
+      const target = new THREE.Vector3(0, this.crystalAxis.getGrowthPointY(), 0);
+      for (const tx of txs) this.transactionPool.spawn(tx, leaderPos, target);
+    };
+
+    // Start the data source THROUGH the engine: intercept() routes onTransactions → engine.enqueue
+    // (paced) and defaults engine.onRealTransactions to the real handler below (feed + particle).
+    this.dataSource.start(this.engine.intercept({
       onSlot: (slot, leader, missed) => {
         // Crystal grows
         this.crystalAxis.addSegment(missed);
@@ -215,10 +228,13 @@ export class Strata {
       onRootAdvance: (_rootSlot) => {
         // Finality is handled by CrystalAxis age computation
       },
-    });
+    }));
   }
 
   update(dt: number): void {
+    // Pump the pacing layer first so paced real txns + synthetic particles emit this frame.
+    this.engine.update(dt);
+
     // TPS tracking
     this.tpsTimer += dt;
     if (this.tpsTimer >= 1.0) {
