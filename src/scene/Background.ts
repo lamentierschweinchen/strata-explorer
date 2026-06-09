@@ -19,6 +19,7 @@ export class Background {
     this.positions = new Float32Array(count * 3);
     const sizes = new Float32Array(count);
     const brightnesses = new Float32Array(count);
+    const phases = new Float32Array(count);
     this.velocities = new Float32Array(count * 3);
 
     for (let i = 0; i < count; i++) {
@@ -29,6 +30,7 @@ export class Background {
 
       sizes[i] = 0.5 + Math.random() * 1.5;
       brightnesses[i] = 0.1 + Math.random() * 0.2;
+      phases[i] = Math.random();
 
       // Very slow random drift
       this.velocities[i3] = (Math.random() - 0.5) * 0.3;
@@ -40,6 +42,7 @@ export class Background {
     this.geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
     this.geometry.setAttribute('aSize', new THREE.BufferAttribute(sizes, 1));
     this.geometry.setAttribute('aBrightness', new THREE.BufferAttribute(brightnesses, 1));
+    this.geometry.setAttribute('aPhase', new THREE.BufferAttribute(phases, 1));
 
     this.material = new THREE.ShaderMaterial({
       vertexShader: dustVertexShader,

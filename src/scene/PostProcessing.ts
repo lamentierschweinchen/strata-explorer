@@ -45,10 +45,10 @@ export class PostProcessing {
     const colorGradePass = new ShaderPass({
       uniforms: {
         tDiffuse: { value: null },
-        uIntensity: { value: 0.6 },
+        uIntensity: { value: 0.72 }, // split-tone strength (cool shadows / warm highlights)
         uExposure: { value: 1.05 },
-        uContrast: { value: 1.05 },
-        uSaturation: { value: 1.1 },
+        uContrast: { value: 1.06 },
+        uSaturation: { value: 1.12 },
       },
       vertexShader: colorGradeVertexShader,
       fragmentShader: colorGradeFragmentShader,
@@ -67,23 +67,24 @@ export class PostProcessing {
     });
     this.composer.addPass(vignettePass);
 
-    // Film grain
+    // Film grain (midtone-masked — shadows & highlights stay clean)
     this.filmGrainPass = new ShaderPass({
       uniforms: {
         tDiffuse: { value: null },
         uTime: { value: 0 },
-        uIntensity: { value: 0.25 },
+        uIntensity: { value: 0.35 },
       },
       vertexShader: filmGrainVertexShader,
       fragmentShader: filmGrainFragmentShader,
     });
     this.composer.addPass(this.filmGrainPass);
 
-    // Chromatic aberration
+    // Chromatic aberration (edge-only, radial — offset scales with dist² so the
+    // image centre stays pristine and only the corners fringe)
     this.caPass = new ShaderPass({
       uniforms: {
         tDiffuse: { value: null },
-        uIntensity: { value: 0.8 },
+        uIntensity: { value: 1.4 },
         uResolution: { value: new THREE.Vector2(width, height) },
       },
       vertexShader: chromaticAberrationVertexShader,

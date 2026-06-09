@@ -3,13 +3,17 @@
 export const dustVertexShader = /* glsl */ `
   attribute float aSize;
   attribute float aBrightness;
+  attribute float aPhase;
 
   varying float vBrightness;
 
   uniform float uTime;
 
   void main() {
-    vBrightness = aBrightness;
+    // Gentle two-frequency twinkle so the motes shimmer even while drifting.
+    float tw = 0.68 + 0.22 * sin(uTime * 0.9 + aPhase * 6.2831)
+                    + 0.10 * sin(uTime * 2.3 + aPhase * 3.1415 + 1.1);
+    vBrightness = aBrightness * tw;
 
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     float perspectiveScale = 200.0 / (-mvPosition.z);

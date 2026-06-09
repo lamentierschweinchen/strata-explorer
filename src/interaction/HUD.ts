@@ -10,6 +10,7 @@ export class HUD {
   private tpsEl: HTMLElement;
   private tpsBar: HTMLElement;
   private tpsBarFill: HTMLElement;
+  private activityLabel: HTMLElement;
 
   private currentTps = 0;
   private targetTps = 0;
@@ -37,14 +38,16 @@ export class HUD {
     `;
     this.container.appendChild(bottomCenter);
 
-    const tpsLabel = document.createElement('div');
-    tpsLabel.style.cssText = `
+    this.activityLabel = document.createElement('div');
+    this.activityLabel.style.cssText = `
       font-family: 'SF Mono', 'Fira Code', monospace;
-      font-size: 9px; letter-spacing: 2px; color: rgba(255,255,255,0.3);
+      font-size: 9px; letter-spacing: 2px; color: rgba(255,255,255,0.34);
       text-transform: uppercase;
     `;
-    tpsLabel.textContent = 'NETWORK ACTIVITY';
-    bottomCenter.appendChild(tpsLabel);
+    // Idle-state label — words, never a bare "0". update() swaps in the live TPS reading
+    // once the network is active, and reverts to this wording when it goes quiet.
+    this.activityLabel.textContent = 'NETWORK ACTIVITY';
+    bottomCenter.appendChild(this.activityLabel);
 
     this.tpsBar = document.createElement('div');
     this.tpsBar.className = 'tps-bar-container';
@@ -54,10 +57,15 @@ export class HUD {
     `;
     bottomCenter.appendChild(this.tpsBar);
 
+    // Fill is full-width with an amber→blue accent gradient; we reveal it left→right via
+    // clip-path so the gradient always maps to the full bar (works at any bar width / mobile).
     this.tpsBarFill = document.createElement('div');
     this.tpsBarFill.style.cssText = `
-      width: 0%; height: 100%; background: rgba(232, 184, 74, 0.6);
-      border-radius: 2px; transition: width 0.3s ease;
+      width: 100%; height: 100%;
+      background: linear-gradient(90deg, #e8b84a 0%, #e0a23f 28%, #7a96cf 72%, #4f86d6 100%);
+      border-radius: 2px;
+      clip-path: inset(0 100% 0 0);
+      transition: clip-path 0.3s ease;
     `;
     this.tpsBar.appendChild(this.tpsBarFill);
   }
@@ -113,14 +121,20 @@ export class HUD {
   updateTps(tps: number): void {
     this.targetTps = tps;
     this.maxTps = Math.max(this.maxTps, tps); // grow the activity-bar ceiling to the observed peak
-    this.tpsEl.textContent = this.formatNumber(tps);
+    // Idle/no-data → em-dash rather than a bare "0" (real mainnet never sits at 0 TPS).
+    this.tpsEl.textContent = tps >= 1 ? this.formatNumber(tps) : '—';
   }
 
   update(dt: number): void {
-    // Smooth TPS bar animation
+    // Smooth TPS bar animation — reveal the amber→blue gradient via clip-path
     this.currentTps += (this.targetTps - this.currentTps) * Math.min(dt * 5, 1);
     const fillPct = Math.min(this.currentTps / this.maxTps * 100, 100);
-    this.tpsBarFill.style.width = `${fillPct}%`;
+    this.tpsBarFill.style.clipPath = `inset(0 ${100 - fillPct}% 0 0)`;
+
+    // Bottom caption doubles as a readout: live TPS when active, the words "Network
+    // Activity" when the network is quiet (so the idle state never reads as "0").
+    this.activityLabel.textContent =
+      this.targetTps >= 1 ? `${this.formatNumber(this.targetTps)} TPS` : 'NETWORK ACTIVITY';
   }
 
   private formatNumber(n: number): string {

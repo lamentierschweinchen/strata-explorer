@@ -7,6 +7,7 @@ import { CrystalAxis } from './CrystalAxis';
 import { SeismicWave } from './SeismicWave';
 import { LeaderBeam } from './LeaderBeam';
 import { Background } from './Background';
+import { Starfield } from './Starfield'; // DESIGN LANE: new far star-shell backdrop
 import { PostProcessing } from './PostProcessing';
 import { TransactionPool } from '../particles/TransactionPool';
 import { CameraController } from '../interaction/CameraController';
@@ -31,6 +32,7 @@ export class Strata {
   private leaderBeam: LeaderBeam;
   private transactionPool: TransactionPool;
   private background: Background;
+  private starfield: Starfield; // DESIGN LANE
   private postProcessing: PostProcessing;
 
   // Interaction
@@ -85,6 +87,10 @@ export class Strata {
 
     // Camera Controller
     this.cameraController = new CameraController(this.camera, this.renderer.domElement);
+
+    // DESIGN LANE: far twinkling star-shell — added first so it sits behind everything.
+    this.starfield = new Starfield();
+    this.scene.add(this.starfield.points);
 
     // Background
     this.background = new Background();
@@ -227,11 +233,16 @@ export class Strata {
     this.cameraController.update(dt);
     this.raycaster.update(this.camera);
     this.crystalAxis.update(dt);
+    // DESIGN LANE: feed the growth-tip light into the validator cloud so the tip's pulse
+    // visibly illuminates nearby validators (custom additive shader → driven by uniform).
+    // Must run after crystalAxis.update() has refreshed the tip glow this frame.
+    this.validatorCloud.setTipGlow(this.crystalAxis.getGrowthPointY(), this.crystalAxis.tipGlowIntensity);
     this.validatorCloud.update(dt);
     this.seismicWave.update(dt);
     this.leaderBeam.update(dt, this.crystalAxis.getGrowthPointY(), this.camera);
     this.transactionPool.update(dt);
     this.background.update(dt);
+    this.starfield.update(dt); // DESIGN LANE: twinkle the far star-shell
     this.postProcessing.update(dt);
     this.hud.update(dt);
     this.infoOverlay.update(dt, this.camera, this.renderer.domElement);
@@ -269,6 +280,7 @@ export class Strata {
     this.leaderBeam.dispose();
     this.transactionPool.dispose();
     this.background.dispose();
+    this.starfield.dispose(); // DESIGN LANE
     this.postProcessing.dispose();
     this.cameraController.dispose();
     this.raycaster.dispose();

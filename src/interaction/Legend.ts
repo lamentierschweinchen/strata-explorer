@@ -1,208 +1,288 @@
-const GLASS_BG = 'rgba(5,5,16,0.5)';
-const GLASS_BORDER = 'rgba(255,255,255,0.2)';
-const GLASS_BLUR = 'blur(8px)';
+// Legend — a persistent peek-button (a small crystal mini-icon) anchored bottom-left.
+// Desktop: hover the button to peek the panel; it closes when the pointer leaves.
+// Mobile: tap to pin it open; tap outside (or the button again) to close.
+// The panel leads with a one-line metaphor, then explains what the motion, brightness
+// and size of each element MEAN, not just what color maps to what.
+//
+// Copy is sourced from the coordinator's canonical COPY.md ("What You're Looking At").
+// Voice: metaphor first, meaning second, pinned to something real. No em dashes.
 
-interface LegendItem {
+const GLASS_BG = 'rgba(5,5,16,0.6)';
+const GLASS_BG_HOVER = 'rgba(5,5,16,0.85)';
+const GLASS_BORDER = 'rgba(255,255,255,0.15)';
+const GLASS_BORDER_HOVER = 'rgba(255,255,255,0.4)';
+const GLASS_BLUR = 'blur(10px)';
+const MONO = "'SF Mono', 'Fira Code', monospace";
+
+// One-line metaphor header (canonical hero line from COPY.md).
+const METAPHOR = 'The Solana blockchain as a living crystal, growing with each heartbeat of the network.';
+
+interface LegendRow {
+  /** Raw HTML for the leading symbol (allows gradients / multi-color dots). */
   symbol: string;
-  symbolColor: string;
-  symbolGradient?: string;
   label: string;
-  description: string;
+  /** What this element's appearance / motion MEANS. */
+  meaning: string;
 }
 
-const LEGEND_ITEMS: LegendItem[] = [
+// Transaction-type dot colors (kept in sync with utils/colors TX_TYPE_HEX).
+const TX_COLORS = ['#ffd700', '#00e5ff', '#aa66ff', '#4cd964'];
+
+// Small inline crystal glyph used in the panel's first row (mirrors the button icon).
+const CRYSTAL_GLYPH = `
+  <svg width="13" height="15" viewBox="0 0 18 18" fill="none" style="display:block;margin:1px auto 0;">
+    <polygon points="9,1.5 13,6 11,16.5 7,16.5 5,6"
+      fill="url(#stxLegendGrad)" stroke="rgba(180,210,255,0.55)" stroke-width="0.5"/>
+    <circle cx="9" cy="3" r="2" fill="#cfe4ff" opacity="0.85"/>
+  </svg>`;
+
+// Small left-light / right-dark gradient swatch for the "Light and dark" row.
+const LIGHTDARK_SWATCH =
+  '<span style="display:inline-block;width:13px;height:6px;border-radius:2px;vertical-align:middle;' +
+  'background:linear-gradient(90deg,#cfe4ff,#5a7fd0,#1a1730);"></span>';
+
+const ROWS: LegendRow[] = [
   {
-    symbol: '\u25C6',
-    symbolColor: '#5588ff',
-    symbolGradient: 'linear-gradient(180deg, #aaccff, #1a1530)',
-    label: 'Crystal Axis',
-    description: "Solana\u2019s block history. Bright top = recent slots. Dark base = finalized.",
+    symbol: CRYSTAL_GLYPH,
+    label: 'The crystal',
+    meaning:
+      "The column at the center is the network's timeline. It grows one layer every time Solana agrees on what just happened. It never branches, and it never rewrites itself.",
   },
   {
-    symbol: '\u25CF',
-    symbolColor: '#ffc850',
-    label: 'Validators',
-    description: 'Mineral deposits. Brighter = more stake. Size = network influence.',
+    symbol: LIGHTDARK_SWATCH,
+    label: 'Light and dark',
+    meaning:
+      'The newest layers glow. The oldest harden into dark rock. Once a layer settles it can never change again. It becomes part of the record, forever.',
   },
   {
-    symbol: '\u2501',
-    symbolColor: '#ffc850',
-    label: 'Leader Spotlight',
-    description: "The golden beam shows who\u2019s producing the current block.",
+    symbol: '<span style="color:#ffc850;font-size:13px;">&#9679;</span>',
+    label: 'The validators',
+    meaning:
+      'Each point is a real validator, a computer somewhere in the world helping keep the network honest. The more it has staked, the larger it burns.',
   },
   {
-    symbol: '\u25CC',
-    symbolColor: '#cdb87a',
-    label: 'Seismic Waves',
-    description: 'Ripples when a new slot is confirmed by the network.',
+    symbol: '<span style="color:#fff0cc;font-size:12px;">&#10022;</span>',
+    label: 'The flare',
+    meaning:
+      'Every fraction of a second, one validator is chosen to lay the next layer. It flares, and light reaches in toward the crystal.',
   },
   {
-    symbol: '\u25CF\u25CF\u25CF',
-    symbolColor: '#ffd700',
-    label: 'Transactions',
-    description: 'Particles flowing into the crystal. Gold = transfers, Cyan = DeFi, Purple = NFT, Green = staking.',
+    symbol: TX_COLORS.map(
+      (c, i) =>
+        `<span style="color:${c};font-size:7px;${i > 0 ? 'margin-left:-1px;' : ''}">&#9679;</span>`,
+    ).join(''),
+    label: 'Live activity',
+    meaning:
+      'The transactions moving through the network this second. Gold is money moving. Cyan is a trade. Purple is an NFT. Green is someone staking.',
   },
   {
-    symbol: '\u25AC',
-    symbolColor: '#1a1520',
-    label: 'Missed Slots',
-    description: 'Dark gaps in the crystal where a leader failed to produce a block.',
+    symbol: '<span style="color:#cdb87a;font-size:13px;">&#9676;</span>',
+    label: 'The ripples',
+    meaning: 'When a ripple rolls outward, a new block has just spread across the whole network at once.',
   },
 ];
 
-// Multi-color dots for the Transactions item
-const TX_DOT_COLORS = ['#ffd700', '#00e5ff', '#aa66ff', '#4cd964'];
-
 export class Legend {
   private hud: HTMLElement;
-  private button: HTMLDivElement;
+  private wrapper: HTMLDivElement;
+  private button: HTMLButtonElement;
   private panel: HTMLDivElement;
-  private visible = false;
 
-  private boundToggle: () => void;
+  private open = false;
+  private pinned = false; // tapped-open (mobile / click)
+  private isMobile = false;
+
+  private onDocClick: (e: MouseEvent) => void;
+  private onResize: () => void;
 
   constructor() {
     this.hud = document.getElementById('hud')!;
+    this.isMobile = window.innerWidth <= 480;
 
-    // --- Button ---
-    this.button = document.createElement('div');
-    Object.assign(this.button.style, {
+    // --- Wrapper (the only pointer-interactive region) ---
+    this.wrapper = document.createElement('div');
+    Object.assign(this.wrapper.style, {
       position: 'absolute',
-      bottom: '16px',
-      left: '16px',
-      width: '32px',
-      height: '32px',
+      bottom: this.isMobile ? '16px' : '24px',
+      left: this.isMobile ? '16px' : '28px',
+      zIndex: '20',
+      pointerEvents: 'auto',
+    });
+
+    // --- Peek button: a small crystal mini-icon ---
+    this.button = document.createElement('button');
+    this.button.setAttribute('aria-label', 'What am I looking at?');
+    this.button.setAttribute('title', 'Legend');
+    this.applyButtonStyle(false);
+    this.button.innerHTML = this.crystalIcon();
+    this.wrapper.appendChild(this.button);
+
+    // --- Panel (hidden until peeked/pinned) ---
+    this.panel = document.createElement('div');
+    this.applyPanelStyle();
+    this.panel.innerHTML = this.panelHtml();
+    this.wrapper.appendChild(this.panel);
+
+    // Desktop hover-to-peek
+    this.button.addEventListener('mouseenter', () => {
+      this.applyButtonStyle(true);
+      if (!this.open) this.show();
+    });
+    this.wrapper.addEventListener('mouseleave', () => {
+      if (!this.pinned) this.hide();
+    });
+    // Tap / click toggles a pinned-open state (primary path on mobile)
+    this.button.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (this.pinned) {
+        this.pinned = false;
+        this.hide();
+      } else {
+        this.pinned = true;
+        this.show();
+      }
+    });
+    // a11y focus ring
+    this.button.addEventListener('focus', () => {
+      this.button.style.outline = '1px solid rgba(255,255,255,0.5)';
+      this.button.style.outlineOffset = '2px';
+    });
+    this.button.addEventListener('blur', () => {
+      this.button.style.outline = 'none';
+    });
+
+    // Outside tap closes (mobile)
+    this.onDocClick = (e: MouseEvent) => {
+      if (this.pinned && !this.wrapper.contains(e.target as Node)) {
+        this.pinned = false;
+        this.hide();
+      }
+    };
+    document.addEventListener('click', this.onDocClick);
+
+    // Re-apply responsive sizing on viewport change
+    this.onResize = () => {
+      const mobile = window.innerWidth <= 480;
+      if (mobile !== this.isMobile) {
+        this.isMobile = mobile;
+        this.wrapper.style.bottom = mobile ? '16px' : '24px';
+        this.wrapper.style.left = mobile ? '16px' : '28px';
+        this.applyButtonStyle(this.open);
+        this.applyPanelStyle();
+      }
+    };
+    window.addEventListener('resize', this.onResize);
+
+    this.hud.appendChild(this.wrapper);
+  }
+
+  private applyButtonStyle(hover: boolean): void {
+    const size = this.isMobile ? '32px' : '36px';
+    Object.assign(this.button.style, {
+      width: size,
+      height: size,
+      padding: '0',
+      border: `1px solid ${hover ? GLASS_BORDER_HOVER : GLASS_BORDER}`,
       borderRadius: '50%',
-      background: GLASS_BG,
+      background: hover ? GLASS_BG_HOVER : GLASS_BG,
       backdropFilter: GLASS_BLUR,
       WebkitBackdropFilter: GLASS_BLUR,
-      border: `1px solid ${GLASS_BORDER}`,
+      cursor: 'pointer',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      cursor: 'pointer',
-      zIndex: '15',
-      fontFamily: 'monospace',
-      fontSize: '14px',
-      color: 'rgba(255,255,255,0.7)',
-      userSelect: 'none',
+      transition: 'border-color 0.2s ease, background 0.2s ease',
     });
-    this.button.textContent = '?';
-    this.hud.appendChild(this.button);
+  }
 
-    this.boundToggle = () => this.toggle();
-    this.button.addEventListener('click', this.boundToggle);
-
-    // --- Panel ---
-    this.panel = document.createElement('div');
+  private applyPanelStyle(): void {
     Object.assign(this.panel.style, {
       position: 'absolute',
-      bottom: '56px',
-      left: '16px',
-      width: '280px',
-      background: GLASS_BG,
-      backdropFilter: GLASS_BLUR,
-      WebkitBackdropFilter: GLASS_BLUR,
-      border: `1px solid ${GLASS_BORDER}`,
-      borderRadius: '6px',
-      padding: '12px',
-      opacity: '0',
-      pointerEvents: 'none',
-      transition: 'opacity 0.3s',
-      zIndex: '14',
+      bottom: this.isMobile ? '40px' : '44px',
+      left: '0',
+      width: this.isMobile ? '210px' : '256px',
+      padding: this.isMobile ? '11px 12px' : '14px 16px',
+      background: 'rgba(5,5,16,0.9)',
+      border: '1px solid rgba(255,255,255,0.08)',
+      borderRadius: '8px',
+      backdropFilter: 'blur(12px)',
+      WebkitBackdropFilter: 'blur(12px)',
+      fontFamily: MONO,
+      lineHeight: '1.5',
+      opacity: this.open ? '1' : '0',
+      transform: this.open ? 'translateY(0)' : 'translateY(6px)',
+      transition: 'opacity 0.25s ease, transform 0.25s ease',
+      pointerEvents: this.open ? 'auto' : 'none',
     });
-    this.hud.appendChild(this.panel);
-
-    this.buildContent();
   }
 
-  private buildContent(): void {
-    for (let i = 0; i < LEGEND_ITEMS.length; i++) {
-      const item = LEGEND_ITEMS[i];
-      const row = document.createElement('div');
-      Object.assign(row.style, {
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: '10px',
-        padding: '8px 0',
-        borderBottom: i < LEGEND_ITEMS.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none',
-      });
-
-      // Symbol
-      const symbolEl = document.createElement('span');
-      Object.assign(symbolEl.style, {
-        fontSize: '14px',
-        lineHeight: '1',
-        flexShrink: '0',
-        width: '22px',
-        textAlign: 'center',
-        marginTop: '1px',
-      });
-
-      // Special handling for transactions item (multi-colored dots)
-      if (i === 4) {
-        symbolEl.innerHTML = '';
-        for (let c = 0; c < TX_DOT_COLORS.length; c++) {
-          const dot = document.createElement('span');
-          dot.textContent = '\u25CF';
-          dot.style.color = TX_DOT_COLORS[c];
-          dot.style.fontSize = '8px';
-          if (c > 0) dot.style.marginLeft = '-1px';
-          symbolEl.appendChild(dot);
-        }
-      } else if (item.symbolGradient) {
-        symbolEl.textContent = item.symbol;
-        symbolEl.style.background = item.symbolGradient;
-        symbolEl.style.webkitBackgroundClip = 'text';
-        symbolEl.style.webkitTextFillColor = 'transparent';
-        (symbolEl.style as any).backgroundClip = 'text';
-      } else {
-        symbolEl.textContent = item.symbol;
-        symbolEl.style.color = item.symbolColor;
-      }
-
-      row.appendChild(symbolEl);
-
-      // Text container
-      const textContainer = document.createElement('div');
-      textContainer.style.flex = '1';
-
-      const labelEl = document.createElement('div');
-      Object.assign(labelEl.style, {
-        fontFamily: 'monospace',
-        fontSize: '10px',
-        fontWeight: 'bold',
-        color: 'rgba(255,255,255,0.85)',
-        marginBottom: '2px',
-      });
-      labelEl.textContent = item.label;
-      textContainer.appendChild(labelEl);
-
-      const descEl = document.createElement('div');
-      Object.assign(descEl.style, {
-        fontFamily: 'monospace',
-        fontSize: '9px',
-        color: 'rgba(255,255,255,0.35)',
-        lineHeight: '1.4',
-      });
-      descEl.textContent = item.description;
-      textContainer.appendChild(descEl);
-
-      row.appendChild(textContainer);
-      this.panel.appendChild(row);
-    }
+  /** The crystal mini-icon used on the button. */
+  private crystalIcon(): string {
+    const s = this.isMobile ? 15 : 17;
+    return `
+      <svg width="${s}" height="${s}" viewBox="0 0 18 18" fill="none">
+        <defs>
+          <linearGradient id="stxBtnGrad" x1="9" y1="1" x2="9" y2="17" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#bcd8ff"/>
+            <stop offset="0.5" stop-color="#5a7fd0"/>
+            <stop offset="1" stop-color="#1a1730"/>
+          </linearGradient>
+        </defs>
+        <polygon points="9,1.5 13,6 11,16.5 7,16.5 5,6"
+          fill="url(#stxBtnGrad)" stroke="rgba(180,210,255,0.5)" stroke-width="0.5"/>
+        <line x1="9" y1="1.5" x2="9" y2="16.5" stroke="rgba(220,235,255,0.35)" stroke-width="0.4"/>
+        <circle cx="9" cy="3" r="2.2" fill="#d4e8ff" opacity="0.85"/>
+      </svg>`;
   }
 
-  private toggle(): void {
-    this.visible = !this.visible;
-    this.panel.style.opacity = this.visible ? '1' : '0';
-    this.panel.style.pointerEvents = this.visible ? 'auto' : 'none';
+  private panelHtml(): string {
+    const rows = ROWS.map((r) => `
+      <div style="display:flex;align-items:flex-start;gap:9px;padding:7px 0;border-top:1px solid rgba(255,255,255,0.05);">
+        <span style="flex-shrink:0;width:16px;text-align:center;margin-top:1px;line-height:1;">${r.symbol}</span>
+        <div style="flex:1;">
+          <div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.82);margin-bottom:2px;">${r.label}</div>
+          <div style="font-size:9px;color:rgba(255,255,255,0.4);line-height:1.45;">${r.meaning}</div>
+        </div>
+      </div>`).join('');
+
+    // Hidden <defs> so the inline crystal glyph in the first row can reference a gradient.
+    const defs = `
+      <svg width="0" height="0" style="position:absolute;" aria-hidden="true">
+        <defs>
+          <linearGradient id="stxLegendGrad" x1="9" y1="1" x2="9" y2="17" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#bcd8ff"/>
+            <stop offset="0.5" stop-color="#5a7fd0"/>
+            <stop offset="1" stop-color="#1a1730"/>
+          </linearGradient>
+        </defs>
+      </svg>`;
+
+    return `${defs}
+      <div style="font-size:10px;letter-spacing:0.3px;color:rgba(255,255,255,0.55);padding-bottom:9px;">
+        ${METAPHOR}
+      </div>
+      ${rows}`;
+  }
+
+  private show(): void {
+    this.open = true;
+    this.panel.style.opacity = '1';
+    this.panel.style.transform = 'translateY(0)';
+    this.panel.style.pointerEvents = 'auto';
+    this.applyButtonStyle(true);
+  }
+
+  private hide(): void {
+    this.open = false;
+    this.panel.style.opacity = '0';
+    this.panel.style.transform = 'translateY(6px)';
+    this.panel.style.pointerEvents = 'none';
+    this.applyButtonStyle(false);
   }
 
   dispose(): void {
-    this.button.removeEventListener('click', this.boundToggle);
-
-    if (this.button.parentNode) this.button.parentNode.removeChild(this.button);
-    if (this.panel.parentNode) this.panel.parentNode.removeChild(this.panel);
+    document.removeEventListener('click', this.onDocClick);
+    window.removeEventListener('resize', this.onResize);
+    if (this.wrapper.parentNode) this.wrapper.parentNode.removeChild(this.wrapper);
   }
 }

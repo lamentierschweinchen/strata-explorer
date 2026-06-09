@@ -15,10 +15,15 @@ export const mineralVertexShader = /* glsl */ `
   varying float vBrightness;
   varying float vSize;
   varying float vLeaderPulse;
+  varying float vTipGlow;
 
   uniform float uTime;
   uniform float uSizeMultiplier;
-  uniform float uBreathOffset;
+  uniform float uBreathAmp;     // per-particle breathing amplitude (units)
+  uniform float uBreathFreq;    // base breathing angular frequency
+  uniform vec3 uTipPos;         // crystal growth-tip position (cloud illumination source)
+  uniform float uTipIntensity;  // steady wash + per-slot surge
+  uniform float uTipSigma;      // Gaussian falloff radius of the tip light
 
   // Seismic wave uniforms
   uniform vec3 uWaveOrigins[4];
@@ -31,7 +36,7 @@ export const mineralVertexShader = /* glsl */ `
     vColor = aColor;
     vLeaderPulse = aLeaderPulse;
 
-    // Multi-frequency shimmer for organic mineral feel
+    // Multi-frequency shimmer for organic mineral feel (3 summed sines)
     float shimmer1 = sin(uTime * 1.2 + aPhase * 6.2831);
     float shimmer2 = sin(uTime * 2.7 + aPhase * 3.1415 + 1.3);
     float shimmer3 = sin(uTime * 0.4 + aPhase * 9.42);
@@ -48,16 +53,24 @@ export const mineralVertexShader = /* glsl */ `
       waveBump += proximity * fade * 0.25;
     }
 
+    // Growth-tip illumination — a steady wash + per-slot surge from the crystal tip,
+    // strongest on the inner cloud, fading with distance (Gaussian falloff).
+    float tipDist = distance(position, uTipPos);
+    float tipGlow = uTipIntensity * exp(-(tipDist * tipDist) / (2.0 * uTipSigma * uTipSigma));
+    vTipGlow = tipGlow;
+
     // Combine brightness sources
     vBrightness = aBrightness * shimmer
                 + aLeaderPulse * 0.8
                 + aVotePulse * 0.3
                 + aUpcomingLeader * 0.4
-                + waveBump;
+                + waveBump
+                + tipGlow * 0.6;
 
-    // Apply breathing offset to Y position
+    // Per-particle phase-offset breathing — each deposit drifts on its own phase so the
+    // whole cloud undulates organically instead of translating in rigid lockstep.
     vec3 breathedPos = position;
-    breathedPos.y += uBreathOffset;
+    breathedPos.y += sin(uTime * uBreathFreq + aPhase * 6.2831) * uBreathAmp;
 
     vec4 mvPosition = modelViewMatrix * vec4(breathedPos, 1.0);
 
@@ -81,6 +94,7 @@ export const mineralFragmentShader = /* glsl */ `
   varying float vBrightness;
   varying float vSize;
   varying float vLeaderPulse;
+  varying float vTipGlow;
 
   uniform float uTime;
 
@@ -144,6 +158,9 @@ export const mineralFragmentShader = /* glsl */ `
 
     finalColor /= max(alpha, 0.001);
     finalColor *= vBrightness;
+
+    // Warm wash from the crystal growth-tip light on the inner cloud
+    finalColor += vec3(0.16, 0.10, 0.04) * clamp(vTipGlow, 0.0, 1.5);
 
     gl_FragColor = vec4(finalColor, alpha * clamp(vBrightness, 0.0, 1.0));
   }

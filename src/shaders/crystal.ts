@@ -51,6 +51,7 @@ export const crystalFragmentShader = /* glsl */ `
   varying float vWorldY;
 
   uniform float uTime;
+  uniform float uBreath; // 0..1 idle dual-frequency breathing drive
 
   // Simple 2D hash for noise
   float hash(vec2 p) {
@@ -98,10 +99,20 @@ export const crystalFragmentShader = /* glsl */ `
     float settingFactor = smoothstep(0.2, 0.5, vAge) * (1.0 - smoothstep(0.5, 0.8, vAge)); // mid
     float finalizedFactor = smoothstep(0.6, 1.0, vAge);        // 1.0 at bottom
 
+    // Idle dual-frequency breathing — modulates brightness when nothing is happening
+    float breath = 0.82 + 0.36 * uBreath;
+
     // Surface noise — stronger on young segments, fading on old
     float noiseScale = 4.0 + youngFactor * 2.0;
     vec2 noiseCoord = vUv * noiseScale + vec2(uTime * 0.08, uTime * 0.05);
     float surfaceNoise = fbm(noiseCoord) * (0.3 - finalizedFactor * 0.25);
+
+    // Animated caustic — a second, faster ridged noise layer that keeps the surface
+    // alive between slots (always-on shimmer, independent of any event).
+    vec2 causticCoord = vUv * (noiseScale * 1.6) + vec2(-uTime * 0.05, uTime * 0.11);
+    float caustic = fbm(causticCoord);
+    caustic = 1.0 - abs(caustic * 2.0 - 1.0);                 // ridge → bright filaments
+    caustic = pow(caustic, 2.0) * (youngFactor * 0.5 + settingFactor * 0.35);
 
     // Core brightness: young = bright, finalized = dim
     float coreBrightness = pow(max(NdotV, 0.0), 0.8);
@@ -125,10 +136,15 @@ export const crystalFragmentShader = /* glsl */ `
     vec3 veinColor = vec3(0.6, 0.75, 1.0);
     baseColor += veinColor * noiseHighlight * youngFactor;
     baseColor += vec3(0.15, 0.12, 0.2) * noiseHighlight * finalizedFactor;
+    // Caustic filaments drift across the living (young/setting) crystal
+    baseColor += veinColor * caustic * 0.22;
 
-    // Fresnel rim glow — colored, not just white
-    float rimPower = 2.0 + finalizedFactor * 2.5;
-    float rimGlow = pow(fresnel, rimPower) * (0.9 - finalizedFactor * 0.7);
+    // Fresnel emissive rim — defines BOTH recent (top) and finalized (base) segments.
+    // Young segments get a soft, wide rim; finalized segments get a tighter, brighter
+    // edge so the dark bedrock still glows at its silhouette instead of vanishing.
+    float rimYoung = pow(fresnel, 2.0) * (youngFactor + settingFactor * 0.5);
+    float rimFinal = pow(fresnel, 3.5) * finalizedFactor;
+    float rimGlow = (rimYoung * 0.8 + rimFinal * 0.95) * breath;
 
     // Prismatic edge refraction — visible across more of the crystal
     vec3 prismatic = vec3(0.0);
@@ -156,18 +172,21 @@ export const crystalFragmentShader = /* glsl */ `
     // Subtle inner pulse on young segments
     float pulse = 1.0 + sin(uTime * 3.0 + vUv.y * 8.0) * 0.04 * youngFactor;
 
-    // Alpha: young = translucent, finalized = opaque
+    // Alpha: young = translucent, finalized = opaque. The rim now contributes more
+    // alpha so finalized segments keep a crisp glowing silhouette.
     float baseAlpha = youngFactor * 0.4 + settingFactor * 0.65 + finalizedFactor * 0.92;
-    float alpha = (coreBrightness * 0.4 + rimGlow * 0.25 + baseAlpha * 0.5) * pulse + flashAlpha;
+    float alpha = (coreBrightness * 0.4 + rimGlow * 0.3 + baseAlpha * 0.5) * pulse + flashAlpha;
 
-    // Final color
-    vec3 finalColor = baseColor * (coreBrightness * 0.5 + emissive) * pulse;
-    // Rim glow uses the crystal's own color, not white
+    // Final color — emissive body breathes; rim is emissive on both ends.
+    vec3 finalColor = baseColor * (coreBrightness * 0.5 + emissive) * pulse * breath;
+    // Rim color: icy blue on young, cooler steel on finalized (reads as solid bedrock edge)
     vec3 rimColor = mix(youngColor, vec3(0.5, 0.7, 1.0), 0.5);
-    finalColor += rimColor * rimGlow * 0.35;
+    rimColor = mix(rimColor, vec3(0.46, 0.56, 0.86), finalizedFactor * 0.6);
+    finalColor += rimColor * rimGlow * 0.42;
     finalColor += prismatic;
     finalColor += flashColor;
     finalColor += youngColor * flowIntensity;
+    finalColor += veinColor * caustic * 0.16; // caustic adds a faint emissive glow
 
     gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 1.0));
   }

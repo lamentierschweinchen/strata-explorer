@@ -42,13 +42,14 @@ export const colorGradeFragmentShader = /* glsl */ `
     float luma = dot(graded, vec3(0.2126, 0.7152, 0.0722));
     graded = mix(vec3(luma), graded, uSaturation);
 
-    // Subtle cool tint in shadows (crystal cavern feel)
-    float shadowMask = 1.0 - smoothstep(0.0, 0.3, luma);
-    graded += vec3(0.01, 0.005, 0.025) * shadowMask;
-
-    // Warm highlight lift (amber crystal glow)
-    float highlightMask = smoothstep(0.6, 1.0, luma);
-    graded += vec3(0.025, 0.015, 0.0) * highlightMask;
+    // --- Split-tone: cool blue shadows, warm amber highlights ---
+    float shadowMask = 1.0 - smoothstep(0.0, 0.45, luma);
+    float highlightMask = smoothstep(0.5, 1.0, luma);
+    // Shadows pulled toward cool blue (multiply-toward keeps them dark while tinting hue)
+    graded = mix(graded, graded * vec3(0.80, 0.90, 1.10), shadowMask * 0.5);
+    graded += vec3(0.0, 0.004, 0.022) * shadowMask;            // faint cool floor lift
+    // Highlights pushed toward warm amber (additive so the crystal glow stays bright)
+    graded += vec3(0.05, 0.026, -0.012) * highlightMask;
 
     vec3 finalColor = mix(color, graded, uIntensity);
     gl_FragColor = vec4(clamp(finalColor, 0.0, 1.0), tex.a);

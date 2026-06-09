@@ -55,7 +55,11 @@ export class ValidatorCloud {
       uniforms: {
         uTime: { value: 0 },
         uSizeMultiplier: { value: 1.0 },
-        uBreathOffset: { value: 0 },
+        uBreathAmp: { value: CONFIG.BREATH_AMPLITUDE },
+        uBreathFreq: { value: (2 * Math.PI) / CONFIG.BREATH_PERIOD },
+        uTipPos: { value: new THREE.Vector3(0, 0, 0) },
+        uTipIntensity: { value: 0 },
+        uTipSigma: { value: CONFIG.TIP_GLOW_SIGMA },
         uWaveOrigins: { value: [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()] },
         uWaveTimes: { value: [0, 0, 0, 0] },
         uWaveCount: { value: 0 },
@@ -81,21 +85,23 @@ export class ValidatorCloud {
       this.positions[i3 + 1] = v.position.y;
       this.positions[i3 + 2] = v.position.z;
 
-      // Color from commission
-      const color = getCommissionColor(v.commission);
+      // Random phase drives shimmer, breathing offset, AND the per-validator hue jitter
+      const phase = Math.random();
+      this.phases[i] = phase;
+
+      // Color from commission, with a small deterministic hue jitter so the cloud reads
+      // as a family of ambers rather than identical dots (commission still the signal).
+      const color = getCommissionColor(v.commission, phase);
       this.colors[i3] = color.r;
       this.colors[i3 + 1] = color.g;
       this.colors[i3 + 2] = color.b;
 
-      // Size from stake (log scale, clamped)
+      // Size from stake (log scale, clamped) — high stake → diffraction spikes in shader
       const logStake = Math.log10(Math.max(v.stake, 1));
       this.sizes[i] = 2.0 + (logStake - 4) * 2.0; // 10K SOL → ~2, 10M SOL → ~10
 
       // Brightness starts at moderate
       this.brightnesses[i] = 0.6 + Math.random() * 0.3;
-
-      // Random phase for shimmer
-      this.phases[i] = Math.random();
 
       // No pulses initially
       this.leaderPulses[i] = 0;
@@ -163,11 +169,8 @@ export class ValidatorCloud {
 
   update(dt: number): void {
     this.material.uniforms.uTime.value += dt;
-
-    // Breathing oscillation
-    const time = this.material.uniforms.uTime.value;
-    this.material.uniforms.uBreathOffset.value =
-      Math.sin(time * (2 * Math.PI / CONFIG.BREATH_PERIOD)) * CONFIG.BREATH_AMPLITUDE;
+    // Breathing is now per-particle (phase-offset) inside the vertex shader — no global
+    // offset to drive here, so the cloud undulates organically instead of in lockstep.
 
     // Decay vote pulses
     let voteDirty = false;
@@ -194,6 +197,15 @@ export class ValidatorCloud {
     if (leaderDirty) {
       (this.geometry.getAttribute('aLeaderPulse') as THREE.BufferAttribute).needsUpdate = true;
     }
+  }
+
+  /**
+   * Drive the growth-tip illumination from CrystalAxis. The tip rides the crystal's
+   * Y axis (x = z = 0); `intensity` is a steady wash plus a per-slot surge.
+   */
+  setTipGlow(tipY: number, intensity: number): void {
+    (this.material.uniforms.uTipPos.value as THREE.Vector3).set(0, tipY, 0);
+    this.material.uniforms.uTipIntensity.value = intensity;
   }
 
   /** Update wave uniforms from SeismicWave manager */

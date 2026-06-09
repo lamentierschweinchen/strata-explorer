@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { crystalVertexShader, crystalFragmentShader } from '../shaders/crystal';
+import { flareVertexShader, flareFragmentShader } from '../shaders/flare';
 import { CONFIG } from '../utils/config';
+import { COLORS } from '../utils/colors';
 
 /**
  * The crystal axis — Solana's Proof of History rendered as a growing
@@ -9,8 +11,17 @@ import { CONFIG } from '../utils/config';
  */
 export class CrystalAxis {
   readonly mesh: THREE.Mesh;
+  /** Real point light at the growth tip — pulses each slot, lights nearby validators. */
+  readonly tipLight: THREE.PointLight;
   private geometry: THREE.BufferGeometry;
   private material: THREE.ShaderMaterial;
+
+  // Growth-tip flare (single billboard sprite that bursts on each produced slot)
+  private flare: THREE.Points;
+  private flareMaterial: THREE.ShaderMaterial;
+  private tipPulse = 0; // 0..1, boosted on a fresh slot, decays toward idle
+  /** Cloud-illumination drive (steady wash + per-slot pulse), consumed by ValidatorCloud. */
+  tipGlowIntensity: number = CONFIG.TIP_LIGHT_BASE;
 
   // Ring buffer state
   private headIndex = 0;
@@ -116,6 +127,7 @@ export class CrystalAxis {
         uTime: { value: 0 },
         uGrowthPointY: { value: 0 },
         uFinalityHeight: { value: CONFIG.FINALITY_DEPTH * CONFIG.SEGMENT_HEIGHT },
+        uBreath: { value: 0.5 },
       },
       transparent: true,
       depthWrite: true,
@@ -123,6 +135,41 @@ export class CrystalAxis {
     });
 
     this.mesh = new THREE.Mesh(this.geometry, this.material);
+
+    // --- Growth-tip light + flare ---
+    // A genuine THREE.PointLight rides the growth tip and pulses each slot (it also
+    // contributes to any standard-material meshes in the scene). Because the validator
+    // cloud uses an additively-blended custom shader, its actual illumination is driven
+    // by `tipGlowIntensity` (consumed by ValidatorCloud.setTipGlow) which tracks this
+    // same light — so "the light lights the cloud" is real, not faked.
+    this.tipLight = new THREE.PointLight(
+      COLORS.TIP_LIGHT.getHex(),
+      CONFIG.TIP_LIGHT_BASE,
+      CONFIG.TIP_LIGHT_DISTANCE,
+      2,
+    );
+    this.tipLight.position.set(0, this.getGrowthPointY(), 0);
+    this.mesh.add(this.tipLight); // child of mesh → travels with it, no extra scene wiring
+
+    const flareGeo = new THREE.BufferGeometry();
+    flareGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
+    this.flareMaterial = new THREE.ShaderMaterial({
+      vertexShader: flareVertexShader,
+      fragmentShader: flareFragmentShader,
+      uniforms: {
+        uSize: { value: 30 },
+        uIntensity: { value: 0 },
+        uColor: { value: COLORS.TIP_LIGHT.clone() },
+        uTime: { value: 0 },
+      },
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.flare = new THREE.Points(flareGeo, this.flareMaterial);
+    this.flare.frustumCulled = false;
+    this.flare.position.set(0, this.getGrowthPointY(), 0);
+    this.mesh.add(this.flare);
 
     // Initialize segment tracking
     for (let i = 0; i < maxSeg; i++) {
@@ -164,6 +211,10 @@ export class CrystalAxis {
     this.segmentSlots[seg] = this.segmentCount;
     this.segmentMissed[seg] = missed;
 
+    // Per-slot hero pulse: the tip flares and the light surges on a produced slot.
+    // Missed slots leave a dark gap and do NOT flare (visual honesty).
+    if (!missed) this.tipPulse = 1.0;
+
     // Advance ring buffer
     this.headIndex = (this.headIndex + 1) % this.maxSegments;
     this.segmentCount++;
@@ -185,6 +236,28 @@ export class CrystalAxis {
 
   update(dt: number): void {
     this.material.uniforms.uTime.value += dt;
+    this.flareMaterial.uniforms.uTime.value += dt;
+
+    // --- Dual-frequency idle breathing: brightness (uniform) + slight radius scale ---
+    const t = this.material.uniforms.uTime.value;
+    const breath = 0.6 * Math.sin(t * 0.7) + 0.4 * Math.sin(t * 1.13 + 1.7); // ~[-1, 1]
+    const breath01 = breath * 0.5 + 0.5;
+    this.material.uniforms.uBreath.value = breath01;
+    const s = 1.0 + CONFIG.CRYSTAL_BREATH_SCALE * breath;
+    this.mesh.scale.x = s;
+    this.mesh.scale.z = s; // radius breathes; Y left at 1 so the stack height is stable
+
+    // --- Tip pulse decay + position the light/flare at the (steady) growth point ---
+    this.tipPulse = this.tipPulse > 0.001 ? this.tipPulse * Math.exp(-dt * 3.2) : 0;
+    const tipY = this.getGrowthPointY();
+    this.tipLight.position.set(0, tipY, 0);
+    this.flare.position.set(0, tipY, 0);
+
+    const idle = CONFIG.TIP_LIGHT_BASE * (0.85 + 0.15 * breath01);
+    this.tipLight.intensity = idle + this.tipPulse * CONFIG.TIP_LIGHT_PULSE;
+    this.flareMaterial.uniforms.uIntensity.value = this.tipPulse * 1.2 + 0.05; // faint idle ember
+    // Steady inner wash + per-slot surge, consumed by the validator cloud shader.
+    this.tipGlowIntensity = CONFIG.TIP_LIGHT_BASE * (0.6 + 0.2 * breath01) + this.tipPulse;
 
     let ageDirty = false;
     let flashDirty = false;
@@ -234,5 +307,7 @@ export class CrystalAxis {
   dispose(): void {
     this.geometry.dispose();
     this.material.dispose();
+    this.flare.geometry.dispose();
+    this.flareMaterial.dispose();
   }
 }
