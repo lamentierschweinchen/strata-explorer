@@ -18,10 +18,12 @@ const SOLSCAN_TX = 'https://solscan.io/tx/';
  * Field names are reconciled against `src/data/INTEGRATION.md` during Task 4 integration.
  */
 interface TxEnrichment {
-  /** Source program/protocol — a program id (humanized below) or an already-friendly name. */
-  program?: string;
-  /** Landing slot. */
+  /** Real protocol/program name (Data lane: "Raydium" | "Magic Eden" | "Stake Program"). */
+  protocol?: string;
+  /** Real landing slot (logsNotification context.slot). */
   slot?: number;
+  /** Visual-only density-fill particle — never displayable in the feed. */
+  synthetic?: boolean;
 }
 
 /**
@@ -38,22 +40,22 @@ const KNOWN_PROGRAMS: Record<string, string> = {
   JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4: 'Jupiter',
 };
 
-function humanizeProgram(program: string): string {
-  if (KNOWN_PROGRAMS[program]) return KNOWN_PROGRAMS[program];
-  // Already a friendly label (has whitespace, or shorter than a base58 program id)? Keep it.
-  if (/\s/.test(program) || program.length < 32) return program;
-  return shortenAddress(program);
+function humanizeProtocol(protocol: string): string {
+  if (KNOWN_PROGRAMS[protocol]) return KNOWN_PROGRAMS[protocol];
+  // Data sends friendly names already (whitespace / short); a raw program id is shortened.
+  if (/\s/.test(protocol) || protocol.length < 32) return protocol;
+  return shortenAddress(protocol);
 }
 
 /**
  * Real secondary metadata for a feed row — never fabricated:
- *   program/protocol (humanized) → landing slot → the real, truncated signature.
+ *   protocol (humanized) → landing slot → the real, truncated signature.
  * The signature fallback is what live already surfaces via `tx.detail`.
  */
 function feedSecondary(tx: TransactionInfo): string {
   const enriched = tx as TransactionInfo & TxEnrichment;
-  if (typeof enriched.program === 'string' && enriched.program) {
-    return humanizeProgram(enriched.program);
+  if (typeof enriched.protocol === 'string' && enriched.protocol) {
+    return humanizeProtocol(enriched.protocol);
   }
   if (typeof enriched.slot === 'number' && Number.isFinite(enriched.slot)) {
     return `slot ${formatCount(enriched.slot)}`;
@@ -366,6 +368,9 @@ export class InfoOverlay {
 
   pushTransactions(txs: TransactionInfo[]): void {
     for (const tx of txs) {
+      // Honesty guard: visual-only synthetic density particles must never enter the feed,
+      // even if a future caller forwards them (the data engine already routes them elsewhere).
+      if ((tx as TransactionInfo & TxEnrichment).synthetic) continue;
       if (this.txQueue.length < MAX_QUEUE) {
         this.txQueue.push(tx);
       }
