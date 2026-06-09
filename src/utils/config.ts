@@ -49,10 +49,12 @@ export const CONFIG = {
   STAR_SHELL_INNER: 480,
   STAR_SHELL_OUTER: 820,
 
-  // Post-processing — bloom pushed from timid (0.35/0.3/0.7) toward cinematic
-  BLOOM_STRENGTH: 0.7,
+  // Post-processing — bloom tuned so genuine highlights bloom but the bright faceted crystal
+  // body does NOT flood to white. The raised threshold lets the facets, dispersion, strata and
+  // finality color read; only specular glints / the tip flash / star cores cross it and bloom.
+  BLOOM_STRENGTH: 0.6,
   BLOOM_RADIUS: 0.45,
-  BLOOM_THRESHOLD: 0.45,
+  BLOOM_THRESHOLD: 0.72,
 
   // Validator-cloud breathing (per-particle, phase-offset in shader)
   BREATH_PERIOD: 8, // seconds (base period; each mineral is phase-offset)

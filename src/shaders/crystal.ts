@@ -214,12 +214,12 @@ export const crystalFragmentShader = /* glsl */ `
     }
 
     // --- Assemble ---
-    float emissive = youngF * 0.55 + setF * 0.24 + finalF * 0.06;
+    float emissive = youngF * 0.34 + setF * 0.16 + finalF * 0.05;
     float pulse = 1.0 + sin(uTime * 3.0 + vWorldY * 0.5) * 0.04 * youngF;
 
     vec3 col = baseColor * (diff * 0.5 + emissive) * breath * pulse;
     col += envCol * reflAmt;                                   // sweeping reflective sheen
-    col += mix(vec3(0.8, 0.9, 1.05), uCoreColor, 0.4) * spec * (1.2 + 1.6 * youngF); // glints
+    col += mix(vec3(0.8, 0.9, 1.05), uCoreColor, 0.4) * spec * (0.6 + 0.9 * youngF); // glints
     vec3 rimCol = mix(mix(uYoungColor, vec3(0.55, 0.72, 1.0), 0.5),
                       vec3(0.42, 0.50, 0.78), finalF * 0.6);
     col += rimCol * rim * 0.6 * breath;
