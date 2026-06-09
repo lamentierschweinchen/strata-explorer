@@ -1,10 +1,64 @@
 import * as THREE from 'three';
 import { TransactionInfo } from '../data/DataSource';
 import { TX_TYPE_DISPLAY, TX_TYPE_HEX } from '../utils/colors';
+import { shortenAddress, shortenSignature, formatCount } from '../utils/format';
 
 interface QueuedTx {
   tx: TransactionInfo;
-  el: HTMLDivElement;
+  el: HTMLElement;
+}
+
+/** Public Solana explorer — each feed row deep-links to its real signature here. */
+const SOLSCAN_TX = 'https://solscan.io/tx/';
+
+/**
+ * Forward-compatible view of secondary metadata the Data lane may enrich onto
+ * `TransactionInfo` (additive optional fields, per COORDINATION.md). Read defensively so the
+ * feed lights up automatically once Data populates them — and never shows a fabricated value.
+ * Field names are reconciled against `src/data/INTEGRATION.md` during Task 4 integration.
+ */
+interface TxEnrichment {
+  /** Source program/protocol — a program id (humanized below) or an already-friendly name. */
+  program?: string;
+  /** Landing slot. */
+  slot?: number;
+}
+
+/**
+ * Known Solana program ids → human labels. The Data lane streams transactions per program
+ * (Phase B: Raydium / Magic Eden / Stake), so an enriched tx may carry its source program.
+ * An unknown id is shortened; an already-friendly name passes through. Reference data only.
+ */
+const KNOWN_PROGRAMS: Record<string, string> = {
+  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8': 'Raydium',
+  M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K: 'Magic Eden',
+  Stake11111111111111111111111111111111111111: 'Stake Program',
+  '11111111111111111111111111111111': 'System Program',
+  TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA: 'Token Program',
+  JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4: 'Jupiter',
+};
+
+function humanizeProgram(program: string): string {
+  if (KNOWN_PROGRAMS[program]) return KNOWN_PROGRAMS[program];
+  // Already a friendly label (has whitespace, or shorter than a base58 program id)? Keep it.
+  if (/\s/.test(program) || program.length < 32) return program;
+  return shortenAddress(program);
+}
+
+/**
+ * Real secondary metadata for a feed row — never fabricated:
+ *   program/protocol (humanized) → landing slot → the real, truncated signature.
+ * The signature fallback is what live already surfaces via `tx.detail`.
+ */
+function feedSecondary(tx: TransactionInfo): string {
+  const enriched = tx as TransactionInfo & TxEnrichment;
+  if (typeof enriched.program === 'string' && enriched.program) {
+    return humanizeProgram(enriched.program);
+  }
+  if (typeof enriched.slot === 'number' && Number.isFinite(enriched.slot)) {
+    return `slot ${formatCount(enriched.slot)}`;
+  }
+  return tx.detail ?? shortenSignature(tx.signature);
 }
 
 const GLASS_BG = 'rgba(5,5,16,0.5)';
@@ -186,16 +240,20 @@ export class InfoOverlay {
     }
   }
 
-  private formatAmount(tx: TransactionInfo): string {
-    if (tx.type === 'defi') {
-      return (tx.value * 150).toFixed(0) + ' USDC';
-    }
-    return tx.value.toFixed(1) + ' SOL';
-  }
-
-  private createRow(tx: TransactionInfo): HTMLDivElement {
-    const row = document.createElement('div');
+  private createRow(tx: TransactionInfo): HTMLElement {
     const hexColor = TX_TYPE_HEX[tx.type] || '#ffffff';
+    const sig = tx.signature ?? '';
+    const linkable = sig.length >= 32; // a real base58 signature → deep-link to the explorer
+
+    // Whole row is the explorer link when we have a real signature.
+    const row = document.createElement(linkable ? 'a' : 'div');
+    if (linkable) {
+      const a = row as HTMLAnchorElement;
+      a.href = `${SOLSCAN_TX}${sig}`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.title = 'View transaction on Solscan ↗';
+    }
     Object.assign(row.style, {
       display: 'flex',
       alignItems: 'center',
@@ -203,9 +261,14 @@ export class InfoOverlay {
       fontFamily: 'monospace',
       fontSize: '9px',
       color: 'rgba(255,255,255,0.7)',
-      padding: '2px 0',
+      padding: '2px 4px',
+      margin: '0 -4px', // let the hover highlight reach the panel edges without shifting layout
+      borderRadius: '4px',
+      textDecoration: 'none',
       opacity: '0',
-      transition: `opacity ${FADE_MS}ms`,
+      transition: `opacity ${FADE_MS}ms, background 0.15s`,
+      pointerEvents: linkable ? 'auto' : 'none',
+      cursor: linkable ? 'pointer' : 'default',
     });
 
     // Colored dot
@@ -219,18 +282,44 @@ export class InfoOverlay {
     });
     row.appendChild(dot);
 
-    // Type name
+    // Type name (humanized via TX_TYPE_DISPLAY)
     const typeName = document.createElement('span');
     typeName.style.color = hexColor;
     typeName.textContent = TX_TYPE_DISPLAY[tx.type] || tx.type;
     row.appendChild(typeName);
 
-    // Amount
-    const amount = document.createElement('span');
-    amount.style.marginLeft = 'auto';
-    amount.style.color = 'rgba(255,255,255,0.4)';
-    amount.textContent = tx.detail ?? this.formatAmount(tx);
-    row.appendChild(amount);
+    // Real secondary metadata — program/protocol or slot when enriched, else the real signature.
+    const meta = document.createElement('span');
+    Object.assign(meta.style, {
+      marginLeft: 'auto',
+      color: 'rgba(255,255,255,0.4)',
+      whiteSpace: 'nowrap',
+    });
+    meta.textContent = feedSecondary(tx);
+    row.appendChild(meta);
+
+    // External-link affordance + hover feedback (only when the row links out).
+    if (linkable) {
+      const arrow = document.createElement('span');
+      Object.assign(arrow.style, {
+        color: 'rgba(255,255,255,0.25)',
+        flexShrink: '0',
+        transition: 'color 0.15s',
+      });
+      arrow.textContent = '↗';
+      row.appendChild(arrow);
+
+      row.addEventListener('mouseenter', () => {
+        row.style.background = `${hexColor}1a`;
+        arrow.style.color = hexColor;
+        meta.style.color = 'rgba(255,255,255,0.7)';
+      });
+      row.addEventListener('mouseleave', () => {
+        row.style.background = 'transparent';
+        arrow.style.color = 'rgba(255,255,255,0.25)';
+        meta.style.color = 'rgba(255,255,255,0.4)';
+      });
+    }
 
     // Fade in
     requestAnimationFrame(() => {
