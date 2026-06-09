@@ -11,6 +11,8 @@ export interface SolanaDataSource {
   getUpcomingLeaderIndices(count: number): number[];
   getRootSlot(): number;
   getEpochInfo(): EpochInfo;
+  /** Real network TPS for the HUD headline (optional; HUD falls back to particle spawn rate). */
+  getTps?(): number;
 }
 
 export interface SolanaCallbacks {
@@ -35,6 +37,8 @@ export interface TransactionInfo {
   signature: string;
   type: 'transfer' | 'defi' | 'nft' | 'stake';
   value: number;
+  /** Optional feed display override (live uses the real, truncated signature). */
+  detail?: string;
 }
 
 export interface EpochInfo {

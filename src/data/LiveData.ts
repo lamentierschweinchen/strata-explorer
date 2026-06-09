@@ -6,12 +6,12 @@ import type {
   TransactionInfo,
 } from './DataSource';
 import { CONFIG } from '../utils/config';
-import { seededRandom, logNormal, randomBase58, cylindricalPosition } from '../utils/math';
+import { seededRandom, logNormal, cylindricalPosition } from '../utils/math';
 
-// --- Endpoints (env-driven, public-mainnet fallback) ---
 // Default is a no-key, browser-CORS-friendly public endpoint. (api.mainnet-beta.solana.com
 // returns 403 to browser origins.) Rate-limited under load — set VITE_SOLANA_RPC_HTTP to a
-// Helius/Alchemy URL for any real deployment.
+// Helius/Alchemy URL for any real deployment. Note: the transaction feed (logsSubscribe) needs
+// a working WebSocket, which the public node may not provide; a Helius key is recommended.
 const RPC_HTTP =
   import.meta.env.VITE_SOLANA_RPC_HTTP ?? 'https://solana-rpc.publicnode.com';
 const RPC_WS =
@@ -22,7 +22,19 @@ const VOTE_REFRESH_MS = 10_000; // getVoteAccounts poll cadence
 const PERF_REFRESH_MS = 60_000; // getRecentPerformanceSamples poll cadence
 const PARTICIPATION_RATE = 0.97; // real Solana vote participation ≈ 95–99%
 const MAX_CATCHUP_SLOTS = 8; // cap slot replay when HTTP-polling
-const TX_VISUAL_DIVISOR = 30; // scales real non-vote TPS → on-screen particle budget
+const TX_INTAKE_CAP_PER_SEC = 30; // cap real-tx particles/sec against bursts
+
+/**
+ * Transaction feed sources (Phase B): one logsSubscribe per program, classified by which
+ * stream fires. Chosen for clean category mapping + bounded bandwidth — measured live, the
+ * System/Token programs flood at ~1 MB/s (they touch nearly every tx), so plain transfers
+ * are intentionally not streamed. Extend here (e.g. Jupiter for more DeFi) if bandwidth allows.
+ */
+const TX_PROGRAMS: ReadonlyArray<{ category: TransactionInfo['type']; program: string }> = [
+  { category: 'defi', program: '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8' }, // Raydium AMM v4
+  { category: 'nft', program: 'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K' }, // Magic Eden v2
+  { category: 'stake', program: 'Stake11111111111111111111111111111111111111' }, // Stake program
+];
 
 // --- Minimal JSON-RPC over HTTP ---
 let rpcId = 1;
@@ -50,9 +62,9 @@ function seedFromPubkey(pubkey: string): number {
   return h >>> 0;
 }
 
-/** "7xKq…3mNp" — fallback name (RPC exposes no human-readable validator names). */
-function shortName(pubkey: string): string {
-  return pubkey.length > 9 ? `${pubkey.slice(0, 4)}…${pubkey.slice(-4)}` : pubkey;
+/** "7xKq…3mNp" — used for validator name fallback and real tx signatures in the feed. */
+function shorten(s: string): string {
+  return s.length > 9 ? `${s.slice(0, 4)}…${s.slice(-4)}` : s;
 }
 
 interface VoteAccount {
@@ -88,13 +100,14 @@ interface PerfSample {
  *   • validators ........ getVoteAccounts (stake, commission, votes, delinquency)
  *   • leader rotation ... getLeaderSchedule (joined to validators by identity pubkey)
  *   • epoch ............. getEpochInfo
+ *   • transactions ...... logsSubscribe per program (Phase B), classified by source program
+ *   • TPS ............... getRecentPerformanceSamples (real non-vote throughput)
  *
  * Implements the same interface as MockSolanaData, so main.ts swaps it in directly.
- *
- * PHASE B will replace the transaction subsystem: today the feed/particles are
- * SYNTHETIC, with their volume scaled to the network's real non-vote TPS
- * (getRecentPerformanceSamples) so density tracks real activity. The per-slot vote
- * shimmer is simulated at the real participation rate — delinquent validators stay dark.
+ * The transaction feed shows real signatures classified by program; the per-slot vote
+ * shimmer is simulated at the real participation rate (delinquent validators stay dark).
+ * The transaction feed requires the WebSocket — if it drops (→ HTTP slot polling), chain
+ * state continues but the feed pauses.
  */
 export class LiveSolanaData implements SolanaDataSource {
   private validators: ValidatorInfo[] = [];
@@ -116,6 +129,12 @@ export class LiveSolanaData implements SolanaDataSource {
   private slotPollTimer: number | null = null;
   private stopped = false;
   private rolling = false;
+
+  // Transaction feed (logsSubscribe) state
+  private reqIdToCategory = new Map<number, TransactionInfo['type']>();
+  private subIdToCategory = new Map<number, TransactionInfo['type']>();
+  private txWindowStart = 0;
+  private txThisWindow = 0;
 
   private rng = seededRandom(0xc0ffee);
   private targetTps = 900; // refined from getRecentPerformanceSamples
@@ -157,7 +176,7 @@ export class LiveSolanaData implements SolanaDataSource {
       const index = validators.length;
       validators.push({
         pubkey: v.nodePubkey, // identity pubkey — matches the leader schedule
-        name: shortName(v.nodePubkey),
+        name: shorten(v.nodePubkey),
         stake: Math.round(v.activatedStake / 1e9), // lamports → SOL
         commission: v.commission,
         lastVote: v.lastVote,
@@ -260,6 +279,8 @@ export class LiveSolanaData implements SolanaDataSource {
     }
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
+    this.reqIdToCategory.clear();
+    this.subIdToCategory.clear();
     this.callbacks = null;
   }
 
@@ -268,7 +289,7 @@ export class LiveSolanaData implements SolanaDataSource {
     try {
       ws = new WebSocket(RPC_WS);
     } catch (err) {
-      console.warn('[live] WebSocket unavailable; using HTTP slot polling.', err);
+      console.warn('[live] WebSocket unavailable; using HTTP slot polling (no tx feed).', err);
       this.startSlotPolling();
       return;
     }
@@ -276,12 +297,31 @@ export class LiveSolanaData implements SolanaDataSource {
     ws.onopen = () => {
       ws.send(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'slotSubscribe', params: [] }));
       ws.send(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'rootSubscribe', params: [] }));
+      // Transaction feed: one logsSubscribe per program, ids 100+.
+      let reqId = 100;
+      for (const { category, program } of TX_PROGRAMS) {
+        const id = reqId++;
+        this.reqIdToCategory.set(id, category);
+        ws.send(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id,
+            method: 'logsSubscribe',
+            params: [{ mentions: [program] }, { commitment: 'processed' }],
+          }),
+        );
+      }
     };
     ws.onmessage = (ev: MessageEvent) => {
       let msg: any;
       try {
         msg = JSON.parse(ev.data as string);
       } catch {
+        return;
+      }
+      // logsSubscribe confirmation → map subscription id to its category
+      if (typeof msg.id === 'number' && this.reqIdToCategory.has(msg.id) && typeof msg.result === 'number') {
+        this.subIdToCategory.set(msg.result, this.reqIdToCategory.get(msg.id)!);
         return;
       }
       if (msg.method === 'slotNotification') {
@@ -293,18 +333,45 @@ export class LiveSolanaData implements SolanaDataSource {
           this.rootSlot = root;
           this.callbacks?.onRootAdvance(root);
         }
+      } else if (msg.method === 'logsNotification') {
+        const category = this.subIdToCategory.get(msg.params?.subscription);
+        const value = msg.params?.result?.value;
+        if (category && value && value.err === null && typeof value.signature === 'string') {
+          this.onRealTransaction(category, value.signature);
+        }
       }
     };
     ws.onclose = () => {
       this.ws = null;
+      this.subIdToCategory.clear();
       if (!this.stopped && this.slotPollTimer === null) {
-        console.warn('[live] WebSocket closed; falling back to HTTP slot polling.');
+        console.warn('[live] WebSocket closed; falling back to HTTP slot polling (tx feed paused).');
         this.startSlotPolling();
       }
     };
     ws.onerror = () => {
       /* onclose handles the fallback */
     };
+  }
+
+  /** Real, successful transaction from a watched program → feed + particle (rate-capped). */
+  private onRealTransaction(type: TransactionInfo['type'], signature: string): void {
+    const now = performance.now();
+    if (now - this.txWindowStart > 1000) {
+      this.txWindowStart = now;
+      this.txThisWindow = 0;
+    }
+    if (this.txThisWindow >= TX_INTAKE_CAP_PER_SEC) return;
+    this.txThisWindow++;
+
+    this.callbacks?.onTransactions([
+      {
+        signature,
+        type,
+        value: logNormal(this.rng, 0, 1.5), // drives particle size only (not displayed)
+        detail: shorten(signature), // real signature shown in the feed
+      },
+    ]);
   }
 
   private startSlotPolling(): void {
@@ -340,7 +407,6 @@ export class LiveSolanaData implements SolanaDataSource {
     const leader = this.validators[idx]?.pubkey ?? '';
 
     this.callbacks?.onSlot(slot, leader, false);
-    this.emitTransactions();
   }
 
   private handleEpochRollover(): void {
@@ -357,20 +423,6 @@ export class LiveSolanaData implements SolanaDataSource {
       .finally(() => {
         this.rolling = false;
       });
-  }
-
-  private emitTransactions(): void {
-    // SYNTHETIC (Phase B replaces with a real, classified stream). Count scaled to real TPS.
-    const perSlot = this.targetTps * (CONFIG.SLOT_INTERVAL / 1000);
-    const count = Math.min(40, Math.max(1, Math.round(perSlot / TX_VISUAL_DIVISOR)));
-    const txs: TransactionInfo[] = [];
-    for (let i = 0; i < count; i++) {
-      const roll = this.rng();
-      const type: TransactionInfo['type'] =
-        roll < 0.4 ? 'transfer' : roll < 0.7 ? 'defi' : roll < 0.9 ? 'nft' : 'stake';
-      txs.push({ signature: randomBase58(this.rng, 44), type, value: logNormal(this.rng, 0, 2) });
-    }
-    this.callbacks?.onTransactions(txs);
   }
 
   private leaderIndexForSlot(slot: number): number {
@@ -426,5 +478,9 @@ export class LiveSolanaData implements SolanaDataSource {
       slotIndex: Math.max(0, this.currentSlot - this.epochStartSlot),
       slotsInEpoch: this.slotsInEpoch,
     };
+  }
+
+  getTps(): number {
+    return Math.round(this.targetTps);
   }
 }

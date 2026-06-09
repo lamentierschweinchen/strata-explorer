@@ -28,6 +28,9 @@ async function startWith(dataSource: SolanaDataSource): Promise<void> {
   const strata = await Strata.create(container, dataSource);
   if (loadingEl) loadingEl.style.display = 'none';
 
+  // Dev-only introspection handle (stripped from production builds).
+  if (import.meta.env.DEV) (window as any).__strata = strata;
+
   let lastTime = performance.now();
   function loop(): void {
     requestAnimationFrame(loop);

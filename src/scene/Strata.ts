@@ -216,8 +216,9 @@ export class Strata {
     // TPS tracking
     this.tpsTimer += dt;
     if (this.tpsTimer >= 1.0) {
-      this.currentTps = this.txCountThisSecond / this.tpsTimer;
-      this.hud.updateTps(this.currentTps);
+      const spawnTps = this.txCountThisSecond / this.tpsTimer;
+      // Prefer the data source's real network TPS; fall back to the particle spawn rate.
+      this.hud.updateTps(this.dataSource.getTps?.() ?? spawnTps);
       this.txCountThisSecond = 0;
       this.tpsTimer = 0;
     }

@@ -229,7 +229,7 @@ export class InfoOverlay {
     const amount = document.createElement('span');
     amount.style.marginLeft = 'auto';
     amount.style.color = 'rgba(255,255,255,0.4)';
-    amount.textContent = this.formatAmount(tx);
+    amount.textContent = tx.detail ?? this.formatAmount(tx);
     row.appendChild(amount);
 
     // Fade in

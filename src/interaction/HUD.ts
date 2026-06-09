@@ -112,6 +112,7 @@ export class HUD {
 
   updateTps(tps: number): void {
     this.targetTps = tps;
+    this.maxTps = Math.max(this.maxTps, tps); // grow the activity-bar ceiling to the observed peak
     this.tpsEl.textContent = this.formatNumber(tps);
   }
 
