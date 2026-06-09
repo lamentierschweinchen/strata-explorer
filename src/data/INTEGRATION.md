@@ -40,9 +40,19 @@ is wired on top, not into, the data-source contract.
 
 ### `LiveData.ts`
 
-- **Diversity selection:** real txns are bucketed per type and flushed **round-robin** (every
-  250 ms) so the feed alternates types instead of showing a run of 8 Raydium swaps. Ordering is
-  preserved through the engine queue.
+- **Global transfer lane:** a ~1.5 s poll of `getSignaturesForAddress(System, { limit: 25 })`
+  samples the whole network (nearly every tx touches the System program — measured light at
+  ~5.4 KB / 140 ms). Successful sigs (`err === null`; roughly half are failed bot-spam and are
+  dropped) become real `type: 'transfer'` rows: real signature in `detail`, real `slot`, a small
+  visual-only `value`, no `protocol`. It runs over HTTP **independently of the WebSocket**, so the
+  feed keeps flowing even if the precise streams pause. The existing per-program `logsSubscribe`
+  streams stay as precise typed accents (defi/nft/stake).
+- **Cross-source dedup:** signatures are deduped across both sources via a rotating, bounded set.
+  A tx already seen on a precise `logsSubscribe` stream is never re-shown as a generic transfer —
+  the precise program type wins (a Raydium swap that also touches System stays `defi`, not gold).
+- **Diversity selection:** real txns are bucketed per type (transfer + the three program types)
+  and flushed **round-robin** (every 250 ms) so the feed alternates types instead of showing a run
+  of 8 transfers. Ordering is preserved through the engine queue.
 - **Enrichment:** each real tx now carries `protocol`, `slot`, and a real-log-volume `value`.
 - **Resilience:** `rpc()` retries network errors / HTTP 429 / 5xx with exponential backoff
   (honoring `Retry-After`); the WebSocket reconnects with exponential backoff before settling
