@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { TransactionInfo } from '../data/DataSource';
 import { TX_TYPE_DISPLAY, TX_TYPE_HEX } from '../utils/colors';
-import { shortenAddress, shortenSignature, formatCount } from '../utils/format';
+import { shortenSignature } from '../utils/format';
 
 interface QueuedTx {
   tx: TransactionInfo;
@@ -12,63 +12,35 @@ interface QueuedTx {
 const SOLSCAN_TX = 'https://solscan.io/tx/';
 
 /**
- * Forward-compatible view of secondary metadata the Data lane may enrich onto
- * `TransactionInfo` (additive optional fields, per COORDINATION.md). Read defensively so the
- * feed lights up automatically once Data populates them — and never shows a fabricated value.
- * Field names are reconciled against `src/data/INTEGRATION.md` during Task 4 integration.
+ * Visual-only fields the Data lane may set on a transaction that must never reach the
+ * human-readable feed. Read defensively (additive optional fields, per COORDINATION.md);
+ * `TransactionInfo` itself stays frozen.
  */
 interface TxEnrichment {
-  /** Real protocol/program name (Data lane: "Raydium" | "Magic Eden" | "Stake Program"). */
-  protocol?: string;
-  /** Real landing slot (logsNotification context.slot). */
-  slot?: number;
-  /** Visual-only density-fill particle — never displayable in the feed. */
+  /** Density-fill particle that matches real TPS in aggregate — never an individual feed row. */
   synthetic?: boolean;
 }
 
 /**
- * Known Solana program ids → human labels. The Data lane streams transactions per program
- * (Phase B: Raydium / Magic Eden / Stake), so an enriched tx may carry its source program.
- * An unknown id is shortened; an already-friendly name passes through. Reference data only.
- */
-const KNOWN_PROGRAMS: Record<string, string> = {
-  '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8': 'Raydium',
-  M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K: 'Magic Eden',
-  Stake11111111111111111111111111111111111111: 'Stake Program',
-  '11111111111111111111111111111111': 'System Program',
-  TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA: 'Token Program',
-  JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4: 'Jupiter',
-};
-
-function humanizeProtocol(protocol: string): string {
-  if (KNOWN_PROGRAMS[protocol]) return KNOWN_PROGRAMS[protocol];
-  // Data sends friendly names already (whitespace / short); a raw program id is shortened.
-  if (/\s/.test(protocol) || protocol.length < 32) return protocol;
-  return shortenAddress(protocol);
-}
-
-/**
- * Real secondary metadata for a feed row — never fabricated:
- *   protocol (humanized) → landing slot → the real, truncated signature.
- * The signature fallback is what live already surfaces via `tx.detail`.
+ * The secondary column for a feed row: the transaction's real, truncated signature — the same
+ * hash the row deep-links to on Solscan. Hash-forward by product direction: the feed is global,
+ * so it shows *what* (the verifiable hash), never *where* (no protocol, no landing slot). Honest
+ * by construction: the signature is the row's real on-chain identity, never a fabricated value.
  */
 function feedSecondary(tx: TransactionInfo): string {
-  const enriched = tx as TransactionInfo & TxEnrichment;
-  if (typeof enriched.protocol === 'string' && enriched.protocol) {
-    return humanizeProtocol(enriched.protocol);
-  }
-  if (typeof enriched.slot === 'number' && Number.isFinite(enriched.slot)) {
-    return `slot ${formatCount(enriched.slot)}`;
-  }
-  return tx.detail ?? shortenSignature(tx.signature);
+  return shortenSignature(tx.signature) || (tx.detail ?? '');
 }
 
 const GLASS_BG = 'rgba(5,5,16,0.5)';
 const GLASS_BORDER = 'rgba(255,255,255,0.2)';
 const GLASS_BLUR = 'blur(8px)';
+// The feed panel reads quieter than the toggle button: a more transparent glass + hairline
+// border so it recedes into the scene (Galaxy of Nodes' restraint) instead of boxing the feed in.
+const PANEL_BG = 'rgba(5,5,16,0.4)';
+const PANEL_BORDER = 'rgba(255,255,255,0.08)';
 const MAX_VISIBLE = 10;
 const MAX_QUEUE = 50;
-const DRIP_INTERVAL = 800;
+const DRIP_INTERVAL = 1000; // one row per second — a calmer cadence than the old 800ms
 const FADE_MS = 300;
 
 const TX_TYPES = ['all', 'transfer', 'defi', 'nft', 'stake'] as const;
@@ -157,15 +129,18 @@ export class InfoOverlay {
     this.feedPanel = document.createElement('div');
     Object.assign(this.feedPanel.style, {
       position: 'absolute',
-      top: '56px',
-      right: '12px',
-      width: '220px',
-      background: GLASS_BG,
+      // Vertically centered on the right edge — clears the top-right HUD (validators/TPS) the feed
+      // used to crowd, and mirrors Galaxy of Nodes' placement. Reads integrated, not cornered.
+      top: '50%',
+      right: '24px',
+      transform: 'translateY(-50%)',
+      width: '240px',
+      background: PANEL_BG,
       backdropFilter: GLASS_BLUR,
       WebkitBackdropFilter: GLASS_BLUR,
-      border: `1px solid ${GLASS_BORDER}`,
-      borderRadius: '6px',
-      padding: '10px',
+      border: `1px solid ${PANEL_BORDER}`,
+      borderRadius: '10px',
+      padding: '12px 14px',
       pointerEvents: 'auto',
     });
     this.hud.appendChild(this.feedPanel);
@@ -180,7 +155,7 @@ export class InfoOverlay {
       color: 'rgba(255,255,255,0.5)',
       marginBottom: '8px',
     });
-    this.feedHeader.textContent = 'Transaction Feed';
+    this.feedHeader.textContent = 'Live transactions';
     this.feedPanel.appendChild(this.feedHeader);
 
     // Filter bar
@@ -290,7 +265,7 @@ export class InfoOverlay {
     typeName.textContent = TX_TYPE_DISPLAY[tx.type] || tx.type;
     row.appendChild(typeName);
 
-    // Real secondary metadata — program/protocol or slot when enriched, else the real signature.
+    // The row's real, truncated signature — the hash this row deep-links to (see feedSecondary).
     const meta = document.createElement('span');
     Object.assign(meta.style, {
       marginLeft: 'auto',
