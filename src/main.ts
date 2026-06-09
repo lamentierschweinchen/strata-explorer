@@ -3,6 +3,13 @@ import { MockSolanaData } from './data/MockData';
 import { LiveSolanaData } from './data/LiveData';
 import type { SolanaDataSource } from './data/DataSource';
 
+/** Provisional, diegetic loading copy. The Copy lane + coordinator supply final strings. */
+const LOADING_COPY = {
+  connecting: 'Connecting to Solana…',
+  demo: 'Crystallizing demo data…',
+  fallback: 'Live feed unavailable — crystallizing demo…',
+} as const;
+
 function hasWebGL(): boolean {
   try {
     const canvas = document.createElement('canvas');
@@ -51,7 +58,7 @@ if (!hasWebGL()) {
     const mode = pickMode();
     if (loadingEl) {
       loadingEl.style.display = 'block';
-      loadingEl.textContent = mode === 'live' ? 'Connecting to Solana…' : 'Crystallizing…';
+      loadingEl.textContent = mode === 'live' ? LOADING_COPY.connecting : LOADING_COPY.demo;
     }
 
     try {
@@ -64,7 +71,7 @@ if (!hasWebGL()) {
         console.warn('[strata] Live data unavailable — falling back to mock data.');
         if (loadingEl) {
           loadingEl.style.display = 'block';
-          loadingEl.textContent = 'Crystallizing (offline)…';
+          loadingEl.textContent = LOADING_COPY.fallback;
         }
         try {
           await startWith(new MockSolanaData());

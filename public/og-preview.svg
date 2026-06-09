@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#070713"/>
+      <stop offset="1" stop-color="#0a0820"/>
+    </linearGradient>
+    <linearGradient id="crystal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#dcefff"/>
+      <stop offset="0.5" stop-color="#5aa9ff"/>
+      <stop offset="1" stop-color="#ffb24d"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- faint horizontal strata bands -->
+  <g fill="#ffffff" fill-opacity="0.035">
+    <rect x="0" y="150" width="1200" height="2"/>
+    <rect x="0" y="252" width="1200" height="2"/>
+    <rect x="0" y="354" width="1200" height="2"/>
+    <rect x="0" y="456" width="1200" height="2"/>
+    <rect x="0" y="558" width="1200" height="2"/>
+  </g>
+
+  <!-- scattered validator points -->
+  <g fill="#ffb24d" fill-opacity="0.5">
+    <circle cx="760" cy="120" r="3"/><circle cx="1080" cy="180" r="2.5"/>
+    <circle cx="690" cy="470" r="2.5"/><circle cx="1015" cy="520" r="3"/>
+    <circle cx="845" cy="80" r="2"/><circle cx="1120" cy="430" r="2.5"/>
+  </g>
+  <g fill="#5aa9ff" fill-opacity="0.5">
+    <circle cx="720" cy="300" r="2.5"/><circle cx="1100" cy="300" r="3"/>
+    <circle cx="640" cy="210" r="2"/><circle cx="980" cy="150" r="2.5"/>
+  </g>
+
+  <!-- crystal column -->
+  <g transform="translate(905,330)">
+    <polygon points="0,-250 72,-120 42,250 -42,250 -72,-120" fill="url(#crystal)" stroke="#0b0b1e" stroke-width="2"/>
+    <polygon points="0,-250 72,-120 0,-120" fill="#ffffff" opacity="0.20"/>
+    <polygon points="0,-250 -72,-120 0,-120" fill="#000000" opacity="0.16"/>
+    <polygon points="-72,-120 0,-120 -42,250" fill="#000000" opacity="0.20"/>
+    <polygon points="72,-120 0,-120 42,250" fill="#ffffff" opacity="0.06"/>
+  </g>
+
+  <!-- wordmark + tagline -->
+  <text x="92" y="296" font-family="Georgia, 'Times New Roman', serif" font-style="italic" font-size="104" fill="#f3f4ff">The Strata</text>
+  <text x="96" y="356" font-family="'SF Mono', Menlo, monospace" font-size="27" fill="#9aa0c0">Solana mainnet, crystallized in real time</text>
+
+  <rect x="96" y="392" width="214" height="38" rx="19" fill="none" stroke="#5aa9ff" stroke-opacity="0.55"/>
+  <text x="118" y="417" font-family="'SF Mono', Menlo, monospace" font-size="18" fill="#9fd0ff" letter-spacing="3">SOLANA · LIVE</text>
+</svg>

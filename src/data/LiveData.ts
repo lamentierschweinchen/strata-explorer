@@ -6,7 +6,7 @@ import type {
   TransactionInfo,
 } from './DataSource';
 import { CONFIG } from '../utils/config';
-import { seededRandom, logNormal, cylindricalPosition } from '../utils/math';
+import { seededRandom, cylindricalPosition } from '../utils/math';
 
 // Default is a no-key, browser-CORS-friendly public endpoint. (api.mainnet-beta.solana.com
 // returns 403 to browser origins.) Rate-limited under load — set VITE_SOLANA_RPC_HTTP to a
@@ -23,6 +23,18 @@ const PERF_REFRESH_MS = 60_000; // getRecentPerformanceSamples poll cadence
 const PARTICIPATION_RATE = 0.97; // real Solana vote participation ≈ 95–99%
 const MAX_CATCHUP_SLOTS = 8; // cap slot replay when HTTP-polling
 const TX_INTAKE_CAP_PER_SEC = 30; // cap real-tx particles/sec against bursts
+const TX_FLUSH_MS = 250; // round-robin flush cadence for the diversity selector
+const TX_BUCKET_CAP = 24; // per-type buffer cap (drops oldest beyond this)
+
+// RPC resilience: retry network errors / HTTP 429 / 5xx with exponential backoff.
+const RPC_MAX_RETRIES = 4;
+const RPC_BASE_BACKOFF_MS = 400;
+const RPC_MAX_BACKOFF_MS = 8_000;
+
+// WebSocket reconnect: exponential backoff before settling into HTTP slot-polling only.
+const WS_MAX_RECONNECT = 6;
+const WS_BASE_BACKOFF_MS = 1_000;
+const WS_MAX_BACKOFF_MS = 30_000;
 
 /**
  * Transaction feed sources (Phase B): one logsSubscribe per program, classified by which
@@ -30,26 +42,77 @@ const TX_INTAKE_CAP_PER_SEC = 30; // cap real-tx particles/sec against bursts
  * System/Token programs flood at ~1 MB/s (they touch nearly every tx), so plain transfers
  * are intentionally not streamed. Extend here (e.g. Jupiter for more DeFi) if bandwidth allows.
  */
-const TX_PROGRAMS: ReadonlyArray<{ category: TransactionInfo['type']; program: string }> = [
-  { category: 'defi', program: '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8' }, // Raydium AMM v4
-  { category: 'nft', program: 'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K' }, // Magic Eden v2
-  { category: 'stake', program: 'Stake11111111111111111111111111111111111111' }, // Stake program
+interface TxProgram {
+  category: TransactionInfo['type'];
+  /** Human protocol name — a real on-chain fact (the tx touched this program). Feed-safe. */
+  protocol: string;
+  program: string;
+}
+const TX_PROGRAMS: ReadonlyArray<TxProgram> = [
+  { category: 'defi', protocol: 'Raydium', program: '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8' }, // Raydium AMM v4
+  { category: 'nft', protocol: 'Magic Eden', program: 'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K' }, // Magic Eden v2
+  { category: 'stake', protocol: 'Stake Program', program: 'Stake11111111111111111111111111111111111111' }, // Stake program
 ];
 
-// --- Minimal JSON-RPC over HTTP ---
+// --- Minimal JSON-RPC over HTTP, with retry/backoff + HTTP 429 handling ---
 let rpcId = 1;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Exponential backoff with a cap. attempt 0 → BASE, 1 → 2·BASE, … */
+function backoffMs(attempt: number): number {
+  return Math.min(RPC_BASE_BACKOFF_MS * 2 ** attempt, RPC_MAX_BACKOFF_MS);
+}
+
+/**
+ * JSON-RPC call that retries transient failures (network errors, HTTP 429, HTTP 5xx) with
+ * exponential backoff. A 429 honors `Retry-After` when present. Deterministic failures (other
+ * 4xx, RPC-level `error`) throw immediately so callers' fallbacks (mock, slot-polling) fire
+ * without wasting retries.
+ */
 async function rpc<T>(method: string, params: unknown[] = []): Promise<T> {
-  const res = await fetch(RPC_HTTP, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: rpcId++, method, params }),
-  });
-  if (!res.ok) throw new Error(`${method}: HTTP ${res.status}`);
-  const json = await res.json();
-  if (json.error) {
-    throw new Error(`${method}: ${json.error.message ?? JSON.stringify(json.error)}`);
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= RPC_MAX_RETRIES; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(RPC_HTTP, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: rpcId++, method, params }),
+      });
+    } catch (err) {
+      lastErr = err; // network/CORS/DNS — transient, retry
+      if (attempt < RPC_MAX_RETRIES) {
+        await sleep(backoffMs(attempt));
+        continue;
+      }
+      break;
+    }
+
+    if (res.status === 429 || res.status >= 500) {
+      lastErr = new Error(`${method}: HTTP ${res.status}`);
+      if (attempt < RPC_MAX_RETRIES) {
+        const retryAfter = Number(res.headers.get('retry-after'));
+        const wait =
+          Number.isFinite(retryAfter) && retryAfter > 0
+            ? Math.min(retryAfter * 1000, RPC_MAX_BACKOFF_MS)
+            : backoffMs(attempt);
+        await sleep(wait);
+        continue;
+      }
+      break;
+    }
+    if (!res.ok) throw new Error(`${method}: HTTP ${res.status}`); // other 4xx — don't retry
+
+    const json = await res.json();
+    if (json.error) {
+      throw new Error(`${method}: ${json.error.message ?? JSON.stringify(json.error)}`);
+    }
+    return json.result as T;
   }
-  return json.result as T;
+  throw lastErr ?? new Error(`${method}: request failed`);
 }
 
 /** Stable 32-bit seed from a pubkey (FNV-1a) so each validator keeps the same position. */
@@ -131,10 +194,20 @@ export class LiveSolanaData implements SolanaDataSource {
   private rolling = false;
 
   // Transaction feed (logsSubscribe) state
-  private reqIdToCategory = new Map<number, TransactionInfo['type']>();
-  private subIdToCategory = new Map<number, TransactionInfo['type']>();
+  private reqIdToProgram = new Map<number, TxProgram>();
+  private subIdToProgram = new Map<number, TxProgram>();
   private txWindowStart = 0;
   private txThisWindow = 0;
+
+  // Diversity selector: per-type buckets flushed round-robin so the feed alternates types
+  // instead of showing a run of the same program.
+  private txBuckets = new Map<TransactionInfo['type'], TransactionInfo[]>();
+  private txFlushTimer: number | null = null;
+  private flushRotation = 0;
+
+  // WebSocket reconnect (exponential backoff) before falling back to slot-polling only.
+  private wsReconnectAttempts = 0;
+  private wsReconnectTimer: number | null = null;
 
   private rng = seededRandom(0xc0ffee);
   private targetTps = 900; // refined from getRecentPerformanceSamples
@@ -247,6 +320,8 @@ export class LiveSolanaData implements SolanaDataSource {
 
     this.connectWs();
 
+    this.txFlushTimer = window.setInterval(() => this.flushTxBuckets(), TX_FLUSH_MS);
+
     this.timers.push(
       window.setInterval(() => {
         this.refreshValidators()
@@ -263,6 +338,10 @@ export class LiveSolanaData implements SolanaDataSource {
 
   stop(): void {
     this.stopped = true;
+    if (this.wsReconnectTimer !== null) {
+      clearTimeout(this.wsReconnectTimer);
+      this.wsReconnectTimer = null;
+    }
     if (this.ws) {
       this.ws.onclose = null;
       this.ws.onmessage = null;
@@ -277,10 +356,15 @@ export class LiveSolanaData implements SolanaDataSource {
       clearInterval(this.slotPollTimer);
       this.slotPollTimer = null;
     }
+    if (this.txFlushTimer !== null) {
+      clearInterval(this.txFlushTimer);
+      this.txFlushTimer = null;
+    }
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
-    this.reqIdToCategory.clear();
-    this.subIdToCategory.clear();
+    this.reqIdToProgram.clear();
+    this.subIdToProgram.clear();
+    this.txBuckets.clear();
     this.callbacks = null;
   }
 
@@ -299,15 +383,15 @@ export class LiveSolanaData implements SolanaDataSource {
       ws.send(JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'rootSubscribe', params: [] }));
       // Transaction feed: one logsSubscribe per program, ids 100+.
       let reqId = 100;
-      for (const { category, program } of TX_PROGRAMS) {
+      for (const meta of TX_PROGRAMS) {
         const id = reqId++;
-        this.reqIdToCategory.set(id, category);
+        this.reqIdToProgram.set(id, meta);
         ws.send(
           JSON.stringify({
             jsonrpc: '2.0',
             id,
             method: 'logsSubscribe',
-            params: [{ mentions: [program] }, { commitment: 'processed' }],
+            params: [{ mentions: [meta.program] }, { commitment: 'processed' }],
           }),
         );
       }
@@ -319,12 +403,13 @@ export class LiveSolanaData implements SolanaDataSource {
       } catch {
         return;
       }
-      // logsSubscribe confirmation → map subscription id to its category
-      if (typeof msg.id === 'number' && this.reqIdToCategory.has(msg.id) && typeof msg.result === 'number') {
-        this.subIdToCategory.set(msg.result, this.reqIdToCategory.get(msg.id)!);
+      // logsSubscribe confirmation → map subscription id to its program meta
+      if (typeof msg.id === 'number' && this.reqIdToProgram.has(msg.id) && typeof msg.result === 'number') {
+        this.subIdToProgram.set(msg.result, this.reqIdToProgram.get(msg.id)!);
         return;
       }
       if (msg.method === 'slotNotification') {
+        this.onWsHealthy(); // WS is delivering → reset backoff, retire the polling fallback
         const slot = msg.params?.result?.slot;
         if (typeof slot === 'number') this.onNewSlot(slot);
       } else if (msg.method === 'rootNotification') {
@@ -334,28 +419,68 @@ export class LiveSolanaData implements SolanaDataSource {
           this.callbacks?.onRootAdvance(root);
         }
       } else if (msg.method === 'logsNotification') {
-        const category = this.subIdToCategory.get(msg.params?.subscription);
-        const value = msg.params?.result?.value;
-        if (category && value && value.err === null && typeof value.signature === 'string') {
-          this.onRealTransaction(category, value.signature);
+        const meta = this.subIdToProgram.get(msg.params?.subscription);
+        const result = msg.params?.result;
+        const value = result?.value;
+        if (meta && value && value.err === null && typeof value.signature === 'string') {
+          const slot = typeof result?.context?.slot === 'number' ? result.context.slot : undefined;
+          const logCount = Array.isArray(value.logs) ? value.logs.length : 0;
+          this.onRealTransaction(meta, value.signature, slot, logCount);
         }
       }
     };
     ws.onclose = () => {
       this.ws = null;
-      this.subIdToCategory.clear();
-      if (!this.stopped && this.slotPollTimer === null) {
-        console.warn('[live] WebSocket closed; falling back to HTTP slot polling (tx feed paused).');
-        this.startSlotPolling();
-      }
+      this.subIdToProgram.clear();
+      if (this.stopped) return;
+      // Keep chain state flowing immediately, then try to restore the WS (and the tx feed).
+      this.startSlotPolling();
+      this.scheduleWsReconnect();
     };
     ws.onerror = () => {
-      /* onclose handles the fallback */
+      /* onclose handles the fallback + reconnect */
     };
   }
 
-  /** Real, successful transaction from a watched program → feed + particle (rate-capped). */
-  private onRealTransaction(type: TransactionInfo['type'], signature: string): void {
+  /** WS is actively delivering notifications: reset backoff and retire the polling fallback. */
+  private onWsHealthy(): void {
+    this.wsReconnectAttempts = 0;
+    if (this.slotPollTimer !== null) {
+      clearInterval(this.slotPollTimer);
+      this.slotPollTimer = null;
+    }
+  }
+
+  /** Reconnect the WebSocket with exponential backoff; give up to slot-polling after the cap. */
+  private scheduleWsReconnect(): void {
+    if (this.stopped || this.wsReconnectTimer !== null) return;
+    if (this.wsReconnectAttempts >= WS_MAX_RECONNECT) {
+      console.warn('[live] WebSocket reconnect attempts exhausted; staying on HTTP slot polling (tx feed paused).');
+      return;
+    }
+    const delay = Math.min(WS_BASE_BACKOFF_MS * 2 ** this.wsReconnectAttempts, WS_MAX_BACKOFF_MS);
+    this.wsReconnectAttempts++;
+    console.warn(
+      `[live] WebSocket closed; reconnecting in ${delay}ms (attempt ${this.wsReconnectAttempts}/${WS_MAX_RECONNECT}).`,
+    );
+    this.wsReconnectTimer = window.setTimeout(() => {
+      this.wsReconnectTimer = null;
+      if (!this.stopped) this.connectWs();
+    }, delay);
+  }
+
+  /**
+   * Real, successful transaction from a watched program. Rate-capped, enriched with real
+   * metadata (protocol name + landing slot), then bucketed for the diversity selector — it is
+   * NOT emitted immediately, so flushTxBuckets() can interleave types. `value` is a real coarse
+   * magnitude (log volume ≈ tx complexity) and drives particle size only; it is never displayed.
+   */
+  private onRealTransaction(
+    meta: TxProgram,
+    signature: string,
+    slot: number | undefined,
+    logCount: number,
+  ): void {
     const now = performance.now();
     if (now - this.txWindowStart > 1000) {
       this.txWindowStart = now;
@@ -364,14 +489,43 @@ export class LiveSolanaData implements SolanaDataSource {
     if (this.txThisWindow >= TX_INTAKE_CAP_PER_SEC) return;
     this.txThisWindow++;
 
-    this.callbacks?.onTransactions([
-      {
-        signature,
-        type,
-        value: logNormal(this.rng, 0, 1.5), // drives particle size only (not displayed)
-        detail: shorten(signature), // real signature shown in the feed
-      },
-    ]);
+    const tx: TransactionInfo = {
+      signature,
+      type: meta.category,
+      value: Math.max(1, logCount), // real on-chain log volume → particle size only
+      detail: shorten(signature), // real signature shown in the feed
+      protocol: meta.protocol, // real: the tx touched this program
+    };
+    if (slot !== undefined) tx.slot = slot; // real landing slot
+
+    let bucket = this.txBuckets.get(meta.category);
+    if (!bucket) {
+      bucket = [];
+      this.txBuckets.set(meta.category, bucket);
+    }
+    bucket.push(tx);
+    if (bucket.length > TX_BUCKET_CAP) bucket.splice(0, bucket.length - TX_BUCKET_CAP);
+  }
+
+  /** Drain the per-type buckets in round-robin order so the feed alternates transaction types. */
+  private flushTxBuckets(): void {
+    if (this.txBuckets.size === 0) return;
+    const order = TX_PROGRAMS.map((p) => p.category);
+    const out: TransactionInfo[] = [];
+    let drained = true;
+    while (drained) {
+      drained = false;
+      for (let k = 0; k < order.length; k++) {
+        const cat = order[(k + this.flushRotation) % order.length];
+        const bucket = this.txBuckets.get(cat);
+        if (bucket && bucket.length > 0) {
+          out.push(bucket.shift()!);
+          drained = true;
+        }
+      }
+    }
+    this.flushRotation = (this.flushRotation + 1) % order.length;
+    if (out.length > 0) this.callbacks?.onTransactions(out);
   }
 
   private startSlotPolling(): void {

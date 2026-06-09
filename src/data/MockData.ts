@@ -15,6 +15,16 @@ const VALIDATOR_NAMES = [
   'Shadow Drive', 'Render Network', 'Helium IOT', 'Hivemapper Node',
 ];
 
+// Representative protocols per type so mock-mode feeds carry the same enrichment shape as live
+// (protocol + slot). Mock mode is explicitly synthetic, so these names are illustrative — the
+// visual-honesty rule applies only to LIVE displayed facts.
+const MOCK_PROTOCOLS: Record<TransactionInfo['type'], string[]> = {
+  transfer: ['System Program'],
+  defi: ['Raydium', 'Orca', 'Jupiter', 'Meteora'],
+  nft: ['Magic Eden', 'Tensor'],
+  stake: ['Stake Program', 'Marinade', 'Jito'],
+};
+
 export class MockSolanaData implements SolanaDataSource {
   private validators: ValidatorInfo[] = [];
   private currentSlot = 280_000_000;
@@ -198,10 +208,13 @@ export class MockSolanaData implements SolanaDataSource {
         else if (roll < 0.9) type = 'nft';
         else type = 'stake';
 
+        const protocols = MOCK_PROTOCOLS[type];
         transactions.push({
           signature: randomBase58(this.rng, 88),
           type,
           value: logNormal(this.rng, 0, 2), // most small, occasional large
+          protocol: protocols[Math.floor(this.rng() * protocols.length)],
+          slot: this.currentSlot,
         });
       }
 
