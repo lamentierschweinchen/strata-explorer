@@ -1,193 +1,242 @@
-// Crystal axis shaders — translucent growing cylinder with finality gradient,
-// Fresnel rim glow, FBM surface noise, prismatic edge refraction, and flash burst.
+// Crystal axis shaders — a FACETED QUARTZ prism (not a tube).
+//
+// The geometry is an irregular hexagonal column of flat, hard-edged facets that
+// tapers to a terminating point at the growing tip. The vertex stage applies that
+// taper (and analytically re-tilts the flat facet normals so the point shades
+// correctly). The fragment stage does the gem craft: fixed world-space key/rim
+// lights whose specular glints SWEEP across facets as the camera orbits, a faked
+// cool-sky environment reflection, chromatic dispersion at grazing edges, internal
+// strata banding + parallax inclusions seen "through" the translucent facets, and a
+// finality gradient (glowing icy tip → settling violet → opaque dark bedrock).
+//
+// Glow / Fresnel / hot-white-core techniques adapted from the sibling Galaxy of
+// Nodes star + metachain shaders, reworked for a solid faceted mineral.
 
 export const crystalVertexShader = /* glsl */ `
-  attribute float aSegmentAge;
   attribute float aFlash;
   attribute float aMissed;
+  attribute float aSeed;
 
-  varying vec3 vNormal;
-  varying vec3 vViewPosition;
-  varying vec2 vUv;
+  varying vec3 vWorldNormal;
+  varying vec3 vWorldPos;
   varying float vAge;
   varying float vFlash;
   varying float vMissed;
   varying float vWorldY;
+  varying float vSeed;
+  varying float vFacetId;
 
   uniform float uScrollOffset;
-  uniform float uTime;
   uniform float uGrowthPointY;
   uniform float uFinalityHeight;
+  uniform float uTipTaperHeight; // world height over which the tip tapers to a point
+  uniform float uTipMinScale;    // radius scale at the very tip
 
   void main() {
-    vNormal = normalize(normalMatrix * normal);
-    vUv = uv;
     vFlash = aFlash;
     vMissed = aMissed;
+    vSeed = aSeed;
 
-    // Apply scroll offset to Y
-    vec3 scrolledPos = position;
-    scrolledPos.y += uScrollOffset;
-    vWorldY = scrolledPos.y;
+    // Scroll the static ring-buffer geometry down through the world.
+    vec3 pos = position;
+    float worldY = pos.y + uScrollOffset;
+    vWorldY = worldY;
 
-    // Compute smooth continuous age from Y position
-    // Growth point is at top (age=0), finality depth below is age=1
-    float distFromTop = uGrowthPointY - scrolledPos.y;
+    // Smooth, continuous finality age from height: 0 at the growing tip, 1 at the
+    // finality depth below it (older → 1).
+    float distFromTop = uGrowthPointY - worldY;
     vAge = clamp(distFromTop / uFinalityHeight, 0.0, 1.0);
 
-    vec4 mvPosition = modelViewMatrix * vec4(scrolledPos, 1.0);
-    vViewPosition = -mvPosition.xyz;
+    // --- Terminating-point taper -------------------------------------------------
+    // Radius ramps from a near-point at the tip up to full body over the tip zone,
+    // then narrows very slightly toward the deep base (embedding into bedrock).
+    float tt = clamp(distFromTop / uTipTaperHeight, 0.0, 1.0);
+    float taperUp = smoothstep(0.0, 1.0, tt);
+    float radiusScale = mix(uTipMinScale, 1.0, taperUp) * (1.0 - 0.05 * vAge);
+
+    // Analytic slope d(radius)/d(worldY) of the tip ramp, used to re-tilt the flat
+    // facet normal so the terminating faces (which slope inward/up) shade correctly.
+    float baseR = length(position.xz);
+    float dTaper = (1.0 - uTipMinScale) * 6.0 * tt * (1.0 - tt) / max(uTipTaperHeight, 0.001);
+    float slope = -baseR * dTaper; // radius shrinks as worldY rises near the tip
+
+    pos.xz *= radiusScale;
+    pos.y = worldY;
+
+    // Flat facet normal (horizontal, from the attribute) tilted by the taper slope.
+    vec3 nObj = normalize(vec3(normal.x, -slope, normal.z));
+
+    vec4 worldPos = modelMatrix * vec4(pos, 1.0);
+    vWorldPos = worldPos.xyz;
+    vWorldNormal = normalize(mat3(modelMatrix) * nObj);
+    vFacetId = atan(normal.z, normal.x); // stable per-facet id for shimmer variation
+
+    vec4 mvPosition = viewMatrix * worldPos;
     gl_Position = projectionMatrix * mvPosition;
   }
 `;
 
 export const crystalFragmentShader = /* glsl */ `
-  varying vec3 vNormal;
-  varying vec3 vViewPosition;
-  varying vec2 vUv;
+  precision highp float;
+
+  varying vec3 vWorldNormal;
+  varying vec3 vWorldPos;
   varying float vAge;
   varying float vFlash;
   varying float vMissed;
   varying float vWorldY;
+  varying float vSeed;
+  varying float vFacetId;
 
   uniform float uTime;
-  uniform float uBreath; // 0..1 idle dual-frequency breathing drive
+  uniform float uBreath;         // 0..1 idle dual-frequency breathing drive
+  uniform float uSegmentHeight;  // world height of one strata layer
+  uniform float uFinalityHeight;
+  uniform float uGrowthPointY;
+  uniform vec3 uYoungColor;
+  uniform vec3 uSettingColor;
+  uniform vec3 uFinalColor;
+  uniform vec3 uCoreColor;
 
-  // Simple 2D hash for noise
-  float hash(vec2 p) {
-    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
+  // --- 3D value noise for internal inclusions (phantom quartz veils) ---
+  float hash13(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return fract((p.x + p.y) * p.z);
   }
-
-  // Value noise
-  float noise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
+  float noise3(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
-    float a = hash(i);
-    float b = hash(i + vec2(1.0, 0.0));
-    float c = hash(i + vec2(0.0, 1.0));
-    float d = hash(i + vec2(1.0, 1.0));
-    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+    float n000 = hash13(i + vec3(0.0, 0.0, 0.0));
+    float n100 = hash13(i + vec3(1.0, 0.0, 0.0));
+    float n010 = hash13(i + vec3(0.0, 1.0, 0.0));
+    float n110 = hash13(i + vec3(1.0, 1.0, 0.0));
+    float n001 = hash13(i + vec3(0.0, 0.0, 1.0));
+    float n101 = hash13(i + vec3(1.0, 0.0, 1.0));
+    float n011 = hash13(i + vec3(0.0, 1.0, 1.0));
+    float n111 = hash13(i + vec3(1.0, 1.0, 1.0));
+    return mix(
+      mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
+      mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y),
+      f.z);
   }
-
-  // 3-octave FBM
-  float fbm(vec2 p) {
+  float fbm3(vec3 p) {
     float v = 0.0;
-    v += noise(p) * 0.5;
-    v += noise(p * 2.1 + 0.5) * 0.25;
-    v += noise(p * 4.3 + 1.7) * 0.125;
+    v += 0.5 * noise3(p);
+    v += 0.25 * noise3(p * 2.03 + 5.1);
+    v += 0.125 * noise3(p * 4.01 + 9.7);
     return v;
   }
 
   void main() {
-    vec3 viewDir = normalize(vViewPosition);
-    float NdotV = dot(viewDir, vNormal);
-    float fresnel = 1.0 - abs(NdotV);
+    vec3 N = normalize(vWorldNormal);
+    vec3 V = normalize(cameraPosition - vWorldPos);
+    float NdotV = dot(N, V);
+    float fres = 1.0 - abs(NdotV);
 
-    // Missed slot → dark gap
+    // --- Missed slot: a dark fractured gap, no flare (visual honesty) ---
     if (vMissed > 0.5) {
-      float dimAlpha = 0.05;
-      gl_FragColor = vec4(vec3(0.05, 0.03, 0.08), dimAlpha);
+      float rim = pow(fres, 4.0);
+      vec3 c = vec3(0.035, 0.025, 0.06) + vec3(0.10, 0.06, 0.16) * rim;
+      gl_FragColor = vec4(c, 0.16 + rim * 0.30);
       return;
     }
 
-    // Age-driven properties
-    // age 0.0 = just born (top), age 1.0 = finalized (bottom)
-    float youngFactor = 1.0 - smoothstep(0.0, 0.3, vAge);     // 1.0 at top, 0.0 after 30%
-    float settingFactor = smoothstep(0.2, 0.5, vAge) * (1.0 - smoothstep(0.5, 0.8, vAge)); // mid
-    float finalizedFactor = smoothstep(0.6, 1.0, vAge);        // 1.0 at bottom
+    // --- Finality zones: young (tip) → setting (mid) → finalized (bedrock) ---
+    float youngF = 1.0 - smoothstep(0.0, 0.34, vAge);
+    float setF   = smoothstep(0.10, 0.42, vAge) * (1.0 - smoothstep(0.55, 0.88, vAge));
+    float finalF = smoothstep(0.62, 1.0, vAge);
 
-    // Idle dual-frequency breathing — modulates brightness when nothing is happening
-    float breath = 0.82 + 0.36 * uBreath;
+    float breath = 0.84 + 0.32 * uBreath;
+    float distFromTop = uGrowthPointY - vWorldY;
 
-    // Surface noise — stronger on young segments, fading on old
-    float noiseScale = 4.0 + youngFactor * 2.0;
-    vec2 noiseCoord = vUv * noiseScale + vec2(uTime * 0.08, uTime * 0.05);
-    float surfaceNoise = fbm(noiseCoord) * (0.3 - finalizedFactor * 0.25);
+    // --- Internal structure seen THROUGH the facets (so it's not a hollow shell) ---
+    // Sample inclusion noise along the refracted view ray for a parallax "depth" feel.
+    vec3 Rr = refract(-V, N, 0.66); // IOR ~1.5 (quartz)
+    float incl = fbm3(vWorldPos * 0.10 + Rr * 2.0)
+               + fbm3(vWorldPos * 0.10 + Rr * 6.0) * 0.6;
+    incl /= 1.6;
+    float inclMask = smoothstep(0.35, 0.78, incl);
+    vec3 inclYoung = vec3(0.45, 0.72, 1.0);
+    vec3 inclOld   = vec3(0.20, 0.16, 0.28);
+    vec3 inclusionCol = mix(inclOld, inclYoung, clamp(youngF + setF * 0.4, 0.0, 1.0)) * inclMask;
 
-    // Animated caustic — a second, faster ridged noise layer that keeps the surface
-    // alive between slots (always-on shimmer, independent of any event).
-    vec2 causticCoord = vUv * (noiseScale * 1.6) + vec2(-uTime * 0.05, uTime * 0.11);
-    float caustic = fbm(causticCoord);
-    caustic = 1.0 - abs(caustic * 2.0 - 1.0);                 // ridge → bright filaments
-    caustic = pow(caustic, 2.0) * (youngFactor * 0.5 + settingFactor * 0.35);
+    // Strata banding — each segment is one layer; thin dark seam at each boundary,
+    // plus a per-segment value shift (seeded) so the layers read as sediment.
+    float layer = vWorldY / max(uSegmentHeight, 0.001);
+    float seam = smoothstep(0.0, 0.16, abs(sin(layer * 3.14159)));
+    float strata = 0.6 + 0.4 * sin(layer * 6.2831 + vSeed * 6.2831);
 
-    // Core brightness: young = bright, finalized = dim
-    float coreBrightness = pow(max(NdotV, 0.0), 0.8);
-    float emissive = youngFactor * 0.35 + settingFactor * 0.2 + finalizedFactor * 0.04;
+    // --- Base mineral color by finality ---
+    vec3 baseColor = uYoungColor * youngF + uSettingColor * setF + uFinalColor * finalF;
+    baseColor *= (0.75 + 0.25 * strata);
+    baseColor = mix(baseColor, baseColor * 0.5, (1.0 - seam) * (0.4 + 0.6 * finalF));
+    baseColor += inclusionCol * (0.25 + 0.45 * youngF);
+    // Hot-white core where we look straight into a young facet.
+    float coreLook = pow(max(NdotV, 0.0), 1.5);
+    baseColor = mix(baseColor, uCoreColor, coreLook * youngF * 0.25);
 
-    // Colors — crystalline palette, not sterile white
-    vec3 youngColor = vec3(0.45, 0.65, 0.95);    // vivid icy blue
-    vec3 settingColor = vec3(0.35, 0.38, 0.6);   // muted blue-violet
-    vec3 finalizedColor = vec3(0.08, 0.06, 0.14); // deep dark bedrock
-    vec3 coreWhite = vec3(0.85, 0.9, 1.0);        // cool white, not warm
+    // --- Lighting: lights are FIXED in world space, so specular glints sweep across
+    // the flat facets as the camera orbits (the signature faceted-gem sparkle). ---
+    vec3 L1 = normalize(vec3(0.45, 0.85, 0.30));   // key (upper)
+    vec3 L2 = normalize(vec3(-0.65, 0.20, -0.55)); // cool rim/fill (opposite)
+    float shin = mix(160.0, 34.0, vAge);           // young = sharp sparkle, old = soft
+    float s1 = pow(max(dot(N, normalize(L1 + V)), 0.0), shin);
+    float s2 = pow(max(dot(N, normalize(L2 + V)), 0.0), shin * 0.5);
+    float spec = (s1 + s2 * 0.45) * (0.5 + 0.9 * youngF + 0.3 * setF);
+    float diff = max(dot(N, L1), 0.0) * 0.6 + max(dot(N, L2), 0.0) * 0.25 + 0.2;
 
-    vec3 baseColor = youngColor * youngFactor
-                   + settingColor * settingFactor
-                   + finalizedColor * finalizedFactor;
+    // --- Faked environment reflection: cool sky above, dark ground below. The
+    // reflected ray turns with the orbit, so facets carry a moving polished sheen. ---
+    vec3 Rref = reflect(-V, N);
+    float sky = smoothstep(-0.35, 0.85, Rref.y);
+    vec3 envCol = mix(vec3(0.04, 0.05, 0.10), vec3(0.55, 0.72, 1.05), sky);
+    float reflAmt = (0.12 + 0.6 * pow(fres, 2.0)) * (0.35 + 0.65 * youngF + 0.25 * setF);
 
-    // Light core tint — only a hint of white, keep crystal color
-    baseColor = mix(baseColor, coreWhite, coreBrightness * youngFactor * 0.2);
+    // --- Chromatic dispersion at grazing edges (R bends less than B → colored rim) ---
+    vec3 disp = vec3(pow(fres, 2.4), pow(fres, 3.1), pow(fres, 4.2))
+              * vec3(1.0, 0.85, 1.15) * (0.5 + 0.8 * youngF + 0.3 * setF);
+    // Slow prismatic shimmer keyed to facet + height + time (always-on life).
+    float pAng = vFacetId * 0.5 + fres * 2.5 + uTime * 0.20 + vWorldY * 0.05;
+    vec3 prism = (0.5 + 0.5 * cos(6.2831 * (pAng + vec3(0.0, 0.33, 0.67))))
+               * pow(fres, 2.0) * (youngF * 0.5 + setF * 0.3) * 0.5;
 
-    // FBM noise adds visible veins/inclusions
-    float noiseHighlight = surfaceNoise * 0.4;
-    vec3 veinColor = vec3(0.6, 0.75, 1.0);
-    baseColor += veinColor * noiseHighlight * youngFactor;
-    baseColor += vec3(0.15, 0.12, 0.2) * noiseHighlight * finalizedFactor;
-    // Caustic filaments drift across the living (young/setting) crystal
-    baseColor += veinColor * caustic * 0.22;
+    // --- Fresnel rim — keeps both the glowing tip and the dark bedrock silhouette lit ---
+    float rim = pow(fres, 2.2) * (youngF + setF * 0.5) * 0.9 + pow(fres, 3.5) * finalF;
 
-    // Fresnel emissive rim — defines BOTH recent (top) and finalized (base) segments.
-    // Young segments get a soft, wide rim; finalized segments get a tighter, brighter
-    // edge so the dark bedrock still glows at its silhouette instead of vanishing.
-    float rimYoung = pow(fresnel, 2.0) * (youngFactor + settingFactor * 0.5);
-    float rimFinal = pow(fresnel, 3.5) * finalizedFactor;
-    float rimGlow = (rimYoung * 0.8 + rimFinal * 0.95) * breath;
-
-    // Prismatic edge refraction — visible across more of the crystal
-    vec3 prismatic = vec3(0.0);
-    float prismFactor = youngFactor + settingFactor * 0.4;
-    if (prismFactor > 0.05) {
-      float prismAngle = fresnel * 3.0 + vUv.y * 2.0 + uTime * 0.15;
-      vec3 rainbow = 0.5 + 0.5 * cos(6.2831 * (prismAngle + vec3(0.0, 0.33, 0.67)));
-      prismatic = rainbow * pow(fresnel, 2.5) * prismFactor * 0.35;
-    }
-
-    // Flash burst on new segment — subtle warm glow, not blinding white
-    vec3 flashColor = vec3(0.0);
-    float flashAlpha = 0.0;
+    // --- Per-slot flash burst (a fresh produced slot) ---
+    vec3 flashCol = vec3(0.0);
+    float flashA = 0.0;
     if (vFlash > 0.01) {
-      vec3 flashTint = mix(youngColor, coreWhite, 0.5);
-      flashColor = flashTint * vFlash * 0.5;
-      flashAlpha = vFlash * 0.2;
+      flashCol = mix(uYoungColor, uCoreColor, 0.6) * vFlash * 0.9;
+      flashA = vFlash * 0.30;
     }
 
-    // Internal energy flow — slow moving light bands using world position
-    float energyFlow = sin(vWorldY * 0.8 - uTime * 1.5) * 0.5 + 0.5;
-    energyFlow *= energyFlow; // sharpen
-    float flowIntensity = energyFlow * youngFactor * 0.15;
+    // --- Assemble ---
+    float emissive = youngF * 0.55 + setF * 0.24 + finalF * 0.06;
+    float pulse = 1.0 + sin(uTime * 3.0 + vWorldY * 0.5) * 0.04 * youngF;
 
-    // Subtle inner pulse on young segments
-    float pulse = 1.0 + sin(uTime * 3.0 + vUv.y * 8.0) * 0.04 * youngFactor;
+    vec3 col = baseColor * (diff * 0.5 + emissive) * breath * pulse;
+    col += envCol * reflAmt;                                   // sweeping reflective sheen
+    col += mix(vec3(0.8, 0.9, 1.05), uCoreColor, 0.4) * spec * (1.2 + 1.6 * youngF); // glints
+    vec3 rimCol = mix(mix(uYoungColor, vec3(0.55, 0.72, 1.0), 0.5),
+                      vec3(0.42, 0.50, 0.78), finalF * 0.6);
+    col += rimCol * rim * 0.6 * breath;
+    col += disp * 0.5;
+    col += prism;
+    col += flashCol;
 
-    // Alpha: young = translucent, finalized = opaque. The rim now contributes more
-    // alpha so finalized segments keep a crisp glowing silhouette.
-    float baseAlpha = youngFactor * 0.4 + settingFactor * 0.65 + finalizedFactor * 0.92;
-    float alpha = (coreBrightness * 0.4 + rimGlow * 0.3 + baseAlpha * 0.5) * pulse + flashAlpha;
+    // --- Alpha: young translucent & glowing, finalized opaque bedrock. Glints/rim
+    // add alpha so highlights stay crisp even on the translucent tip. ---
+    float baseAlpha = youngF * 0.40 + setF * 0.70 + finalF * 0.96;
+    float alpha = baseAlpha * pulse + spec * 0.7 + rim * 0.3 + flashA + reflAmt * 0.15;
 
-    // Final color — emissive body breathes; rim is emissive on both ends.
-    vec3 finalColor = baseColor * (coreBrightness * 0.5 + emissive) * pulse * breath;
-    // Rim color: icy blue on young, cooler steel on finalized (reads as solid bedrock edge)
-    vec3 rimColor = mix(youngColor, vec3(0.5, 0.7, 1.0), 0.5);
-    rimColor = mix(rimColor, vec3(0.46, 0.56, 0.86), finalizedFactor * 0.6);
-    finalColor += rimColor * rimGlow * 0.42;
-    finalColor += prismatic;
-    finalColor += flashColor;
-    finalColor += youngColor * flowIntensity;
-    finalColor += veinColor * caustic * 0.16; // caustic adds a faint emissive glow
+    // Deep tail dissolve → a finite, elegant spire instead of an endless dark bar.
+    float deepFade = 1.0 - smoothstep(uFinalityHeight * 1.4, uFinalityHeight * 2.6, distFromTop);
+    alpha *= deepFade;
+    col *= (0.4 + 0.6 * deepFade);
 
-    gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 1.0));
+    gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
   }
 `;

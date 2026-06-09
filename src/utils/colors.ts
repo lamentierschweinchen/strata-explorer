@@ -13,10 +13,11 @@ export const COLORS = {
   TX_NFT: new THREE.Color(0.85, 0.4, 1.0),            // purple
   TX_STAKE: new THREE.Color(0.3, 1.0, 0.6),           // green
 
-  // Crystal axis
-  CRYSTAL_CORE: new THREE.Color(0.9, 0.92, 1.0),      // white-silver
-  CRYSTAL_YOUNG: new THREE.Color(0.7, 0.85, 1.0),     // soft blue glow
-  CRYSTAL_OLD: new THREE.Color(0.15, 0.12, 0.2),      // dark bedrock
+  // Crystal axis — faceted quartz: glowing icy tip → settling violet → dark bedrock
+  CRYSTAL_CORE: new THREE.Color(0.85, 0.92, 1.05),    // cool hot-white core (slightly >1 to bloom)
+  CRYSTAL_YOUNG: new THREE.Color(0.40, 0.62, 1.0),    // vivid icy blue (newest, glowing, translucent)
+  CRYSTAL_SETTING: new THREE.Color(0.32, 0.34, 0.60), // blue-violet (mid, crystallizing)
+  CRYSTAL_OLD: new THREE.Color(0.06, 0.05, 0.11),     // deep mineral bedrock (finalized, opaque)
 
   // Seismic waves
   WAVE_COLOR: new THREE.Color(0.8, 0.7, 0.5),         // warm subtle
