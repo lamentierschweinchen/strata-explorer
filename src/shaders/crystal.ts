@@ -393,12 +393,16 @@ export function applyGemPatches(shader: PatchedShader, uniforms: ClusterUniforms
         float cluVeil = 0.50 + 0.50 * cfbm3(vCluLocal * 1.5 + vCluSeed * 9.0 + vec3(0.0, uTime * 0.03, 0.0));
         float cluLitZone = cluYoung + 0.48 * (1.0 - cluYoung) * (1.0 - cluMatrixF);
         vec3 cluGlowCol = mix(cluGem, uCoreCol, 0.30);
-        totalEmissiveRadiance += cluGlowCol * cluLitZone * cluVeil * (0.26 + 0.12 * uBreath);
-        totalEmissiveRadiance += mix(uCoreCol, cluGem, 0.4) * vCluFlash * 0.85;
+        totalEmissiveRadiance += cluGlowCol * cluLitZone * cluVeil * (0.22 + 0.10 * uBreath);
+        totalEmissiveRadiance += mix(uCoreCol, cluGem, 0.4) * vCluFlash * 0.50;
         totalEmissiveRadiance += cluGlowCol * cluWave * (0.22 * (1.0 - cluMatrixF * 0.8));
         float cluDepthIn = 0.55 + 0.45 * cfbm3(vCluLocal * 0.9 + vCluSeed * 11.0);
         totalEmissiveRadiance += uEmberCol * cluEmber * cluDepthIn
           * (0.26 + 0.10 * uBreath) * (1.0 - cluMatrixF * 0.55);
+        // Luma soft-compression: stacked terms (glow+flash+wave at the head) roll
+        // off instead of blowing to white — hue survives at the brightest point.
+        float cluELuma = dot(totalEmissiveRadiance, vec3(0.2126, 0.7152, 0.0722));
+        totalEmissiveRadiance /= (1.0 + cluELuma * 0.55);
         totalEmissiveRadiance *= cluFade;
       }
     `)
@@ -441,14 +445,17 @@ export function applySolidPatches(shader: PatchedShader, uniforms: ClusterUnifor
         float cluLive = 1.0 - vCluMissed; // cinders never emit
         vec3 cluGlowCol = mix(cluGem, uCoreCol, 0.45);
         float cluDruzyZone = cluYoung + 0.40 * (1.0 - cluYoung) * (1.0 - cluMatrixF);
-        totalEmissiveRadiance += cluGlowCol * cluDruzyZone * (0.30 + 0.14 * uBreath) * cluLive;
-        totalEmissiveRadiance += mix(uCoreCol, cluGem, 0.35) * vCluFlash * 1.2 * cluLive;
+        totalEmissiveRadiance += cluGlowCol * cluDruzyZone * (0.26 + 0.12 * uBreath) * cluLive;
+        totalEmissiveRadiance += mix(uCoreCol, cluGem, 0.35) * vCluFlash * 0.70 * cluLive;
         totalEmissiveRadiance += cluGlowCol * cluWave * 0.25 * cluLive * (1.0 - cluMatrixF * 0.8);
         totalEmissiveRadiance += uEmberCol * cluEmber * (0.22 + 0.10 * uBreath)
           * (1.0 - cluMatrixF * 0.5) * cluLive;
         // Settled druzy keeps a rare, faint twinkle — the geode shell still glitters.
         float cluTwk = step(0.992, chash13(vec3(vCluSeed * 97.0, floor(uTime * 2.0 + vCluSeed * 31.0), 7.0)));
         totalEmissiveRadiance += uCoreCol * cluTwk * cluMatrixF * 0.09 * cluLive;
+        // Same soft-compression as the gems — the head must never flood.
+        float cluELuma = dot(totalEmissiveRadiance, vec3(0.2126, 0.7152, 0.0722));
+        totalEmissiveRadiance /= (1.0 + cluELuma * 0.55);
         totalEmissiveRadiance *= cluFade;
       }
     `);

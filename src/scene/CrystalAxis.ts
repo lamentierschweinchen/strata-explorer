@@ -43,13 +43,24 @@ import { COLORS } from '../utils/colors';
  *   getGrowthPointY() — the head's fixed world Y (CONFIG.CLUSTER_HEAD_Y).
  *   tipGlowIntensity  — cloud-illumination drive (kept on the legacy 0..~3 scale).
  *
- * RAYCAST → CRYSTAL MAPPING (for the tree-ring hover feature):
- *   Raycast against the meshes in `raycastTargets` (the three gem InstancedMesh
- *   variants, named 'cluster-gems-0/1/2'). For a hit:
- *     info = getSegmentInfo(intersection.instanceId)
- *   instanceId IS the ring index on every variant. Returns
- *   { ringIndex, slot, missed, leaderIndex, slotsBehindHead } or null for
- *   never-written / recycled / vacant rings.
+ * RAYCAST → CRYSTAL MAPPING (shared by BOTH planned consumers — the interactive
+ * mouse hover AND the mouse-less auto-labels surface the same per-crystal info):
+ *   • Hover: raycast against `raycastTargets` (the three gem InstancedMesh
+ *     habits, named 'cluster-gems-0/1/2'; every ring renders its slot's clump
+ *     across all three — main blade + two flankers — so a hit on ANY of them
+ *     resolves the same slot). `intersection.instanceId` IS the ring index:
+ *       describeCrystal(intersection.instanceId)
+ *   • Auto-labels: pick rings by recency/zone (e.g. newest produced, the ember
+ *     crossing) and call describeCrystal(ringIndex) directly — `anchor` is the
+ *     crystal's live world-space tip (project it for a DOM label; for a missed
+ *     slot's vacancy it falls back to the spine point).
+ *   getSegmentInfo(ringIndex) remains as the raw metadata subset.
+ *
+ * PRESENTATION-MODE FRAMING (scripted shots, mouse-less): getFramingAnchors()
+ * returns live world-space anchor points (head / bright centroid / ember band /
+ * tail fade) — pair them with the parameterized camera constants in CONFIG
+ * (ORBIT_RADIUS, CAMERA_TARGET_Y, ORBIT_HEIGHT_Y, ORBIT_HEIGHT_DRIFT, CAMERA_FOV);
+ * no single-orbit assumption is baked anywhere in this module.
  */
 export class CrystalAxis {
   /** Group root of the cluster (gems, druzy, stem, lights, coma are children). */
@@ -98,17 +109,27 @@ export class CrystalAxis {
   private strikeT = 99;       // seconds since last nucleation (starts "long ago")
   private tipPulse = 0;
   private lastProducedBirth = -1e9;
+  // Camera distance to the head, captured by the grab pass each frame: the head
+  // light is exposure-compensated so the growth front neither floods at ZOOM_MIN
+  // nor dies at the idle orbit (1/d² is unforgiving across a 4× distance range).
+  private camDistToHead: number = CONFIG.ORBIT_RADIUS;
 
   // Per-segment state (ring buffers)
   private segmentBirth: Float64Array;     // absolute index at write time (-1 empty)
   private segmentBirthTime: Float32Array; // for the nucleation scale-in
   private segmentVariant: Uint8Array;     // gem habit per segment (leader-stable)
+  private segmentHue: Float32Array;       // family hue per segment (describeCrystal)
   private gemTheta: Float32Array;         // azimuth around the spine
   private gemTilt: Float32Array;          // head-ward lean
   private gemRoll: Float32Array;
   private gemLen: Float32Array;
   private gemWidX: Float32Array;
   private gemWidZ: Float32Array;
+  // Flanking prisms (2 per slot, on the two unused habit meshes at the same ring):
+  // the slot's deposit becomes an interlocking clump instead of a lone blade.
+  private gemFTheta: Float32Array;        // maxSegments × 2
+  private gemFLen: Float32Array;
+  private gemFWid: Float32Array;
   // Druzy micro statics (maxSegments × druzyPerSlot)
   private dTheta: Float32Array;
   private dSOff: Float32Array;
@@ -291,12 +312,16 @@ export class CrystalAxis {
     this.segmentBirth = new Float64Array(maxSeg).fill(-1);
     this.segmentBirthTime = new Float32Array(maxSeg);
     this.segmentVariant = new Uint8Array(maxSeg);
+    this.segmentHue = new Float32Array(maxSeg);
     this.gemTheta = new Float32Array(maxSeg);
     this.gemTilt = new Float32Array(maxSeg);
     this.gemRoll = new Float32Array(maxSeg);
     this.gemLen = new Float32Array(maxSeg);
     this.gemWidX = new Float32Array(maxSeg);
     this.gemWidZ = new Float32Array(maxSeg);
+    this.gemFTheta = new Float32Array(maxSeg * 2);
+    this.gemFLen = new Float32Array(maxSeg * 2);
+    this.gemFWid = new Float32Array(maxSeg * 2);
     this.dTheta = new Float32Array(maxSeg * K);
     this.dSOff = new Float32Array(maxSeg * K);
     this.dScale = new Float32Array(maxSeg * K);
@@ -304,6 +329,15 @@ export class CrystalAxis {
 
     // ================= Gem variant meshes ===========================================
     // Three crystal habits — families of terminated prisms, never one clean gem.
+    // A static, generous bounding sphere over the whole reef gates raycasts:
+    // InstancedMesh.computeBoundingSphere() would cache the construction-time
+    // (all-zero) sphere and never see the per-frame instance motion.
+    const reefSphere = (() => {
+      const c = new THREE.Vector3(), t = new THREE.Vector3();
+      const n = new THREE.Vector3(), b = new THREE.Vector3();
+      this.frameAt(CONFIG.CLUSTER_FADE_S * 0.5, c, t, n, b);
+      return new THREE.Sphere(c.clone(), CONFIG.CLUSTER_FADE_S * 0.62 + 26);
+    })();
     const habits: Array<'stout' | 'blade' | 'twin'> = ['stout', 'blade', 'twin'];
     for (let v = 0; v < 3; v++) {
       const geo = CrystalAxis.buildCrystalGeometry(habits[v], 0xc1 + v * 37);
@@ -326,6 +360,7 @@ export class CrystalAxis {
       im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       for (let i = 0; i < maxSeg; i++) im.setMatrixAt(i, CrystalAxis._zeroM);
       im.instanceMatrix.needsUpdate = true;
+      im.boundingSphere = reefSphere.clone(); // static gate for raycasts (hover)
       this.gemMeshes.push(im);
       this.mesh.add(im);
     }
@@ -396,7 +431,7 @@ export class CrystalAxis {
       vertexShader: flareVertexShader,
       fragmentShader: flareFragmentShader,
       uniforms: {
-        uSize: { value: 15 },
+        uSize: { value: 13 },
         uIntensity: { value: 0 },
         uColor: { value: COLORS.CRYSTAL_AMBER.clone() },
         uIceColor: { value: COLORS.CRYSTAL_YOUNG.clone() },
@@ -479,9 +514,9 @@ export class CrystalAxis {
 
   /** Matrix shell radius at arc-length s — thin neck at the head, swelling shell. */
   private static stemRadius(s: number): number {
-    const grow = THREE.MathUtils.smoothstep(s, 2, 46);
+    const grow = THREE.MathUtils.smoothstep(s, 2, 40);
     const taper = 1 - 0.35 * THREE.MathUtils.smoothstep(s, 78, CONFIG.CLUSTER_FADE_S);
-    return (1.0 + 3.2 * grow) * taper;
+    return (1.5 + 4.4 * grow) * taper;
   }
 
   // ================= Geometry builders ==============================================
@@ -713,6 +748,7 @@ export class CrystalAxis {
     if (this.grabbing) return;
     if (scene.overrideMaterial) return; // depth/DoF prepass — not a beauty frame
     if (!this.envRT) this.buildEnvironment(renderer);
+    this.camDistToHead = camera.getWorldPosition(CrystalAxis._pos).distanceTo(this.mesh.position);
     this.grabbing = true;
 
     renderer.getDrawingBufferSize(this.grabSize);
@@ -791,12 +827,22 @@ export class CrystalAxis {
     // Per-crystal habit within the spray; the leader's first slot is its dominant blade.
     const dominant = slotInLeader === 0;
     this.segmentVariant[ring] = variant;
-    this.gemTheta[ring] = azimuth + (slotInLeader - 1.5) * 0.42 + (rng() - 0.5) * 0.22;
-    this.gemTilt[ring] = 0.30 + 0.32 * rng();
+    this.segmentHue[ring] = hue;
+    this.gemTheta[ring] = azimuth + (slotInLeader - 1.5) * 0.52 + (rng() - 0.5) * 0.24;
+    this.gemTilt[ring] = 0.22 + 0.55 * rng();
     this.gemRoll[ring] = rng() * Math.PI * 2;
-    this.gemLen[ring] = (5.5 + 4.0 * rng()) * (dominant ? 1.5 : 1.0);
-    this.gemWidX[ring] = (1.45 + 0.95 * rng()) * (dominant ? 1.25 : 1.0);
-    this.gemWidZ[ring] = (1.45 + 0.95 * rng()) * (dominant ? 1.25 : 1.0);
+    this.gemLen[ring] = (7.2 + 5.2 * rng()) * (dominant ? 1.5 : 1.0);
+    this.gemWidX[ring] = (1.9 + 1.2 * rng()) * (dominant ? 1.25 : 1.0);
+    this.gemWidZ[ring] = (1.9 + 1.2 * rng()) * (dominant ? 1.25 : 1.0);
+    // Two flanking prisms splay around the main blade — the deposit reads as an
+    // interlocking clump (reference density), not a lone needle. Same slot, same
+    // family; they live on the two habit meshes the main crystal doesn't use.
+    for (let f = 0; f < 2; f++) {
+      const i = ring * 2 + f;
+      this.gemFTheta[i] = this.gemTheta[ring] + (f === 0 ? -1 : 1) * (0.40 + 0.42 * rng());
+      this.gemFLen[i] = this.gemLen[ring] * (0.42 + 0.28 * rng());
+      this.gemFWid[i] = (this.gemWidX[ring] + this.gemWidZ[ring]) * 0.5 * (0.52 + 0.24 * rng());
+    }
 
     // Metadata (ring-buffered; hover feature)
     this.segmentSlots[ring] = slot ?? -1;
@@ -805,25 +851,27 @@ export class CrystalAxis {
     this.segmentBirth[ring] = birth;
     this.segmentBirthTime[ring] = this.timeAcc;
 
-    // Per-instance attributes on the chosen habit (others stay zero-scaled).
-    const crystalHue = THREE.MathUtils.clamp(hue + (rng() - 0.5) * 0.10, 0, 1);
-    this.gemBirthAttr[variant].setX(ring, birth);
-    this.gemHueAttr[variant].setX(ring, crystalHue);
-    this.gemSeedAttr[variant].setX(ring, rng());
-    this.gemMissedAttr[variant].setX(ring, missed ? 1 : 0);
-    this.gemBirthAttr[variant].needsUpdate = true;
-    this.gemHueAttr[variant].needsUpdate = true;
-    this.gemSeedAttr[variant].needsUpdate = true;
-    this.gemMissedAttr[variant].needsUpdate = true;
+    // Per-instance attributes on ALL THREE habit meshes (main + two flankers share
+    // the ring index; each gets its own hue jitter/seed within the family).
+    for (let g = 0; g < 3; g++) {
+      this.gemBirthAttr[g].setX(ring, birth);
+      this.gemHueAttr[g].setX(ring, THREE.MathUtils.clamp(hue + (rng() - 0.5) * 0.10, 0, 1));
+      this.gemSeedAttr[g].setX(ring, rng());
+      this.gemMissedAttr[g].setX(ring, missed ? 1 : 0);
+      this.gemBirthAttr[g].needsUpdate = true;
+      this.gemHueAttr[g].needsUpdate = true;
+      this.gemSeedAttr[g].needsUpdate = true;
+      this.gemMissedAttr[g].needsUpdate = true;
+    }
 
     // Druzy deposit: a scatter of micro-crystals around the slot's azimuth sector.
     // A missed slot leaves a sparse pocket of dark cinders — the vacancy.
     for (let k = 0; k < K; k++) {
       const i = ring * K + k;
       this.dTheta[i] = azimuth + (rng() - 0.5) * 2.3;
-      this.dSOff[i] = (rng() - 0.5) * 1.35 * CONFIG.CLUSTER_SPACING;
+      this.dSOff[i] = (rng() - 0.5) * 3.0; // absolute spread — independent of slot spacing
       this.dTilt[i] = 0.15 + 0.5 * rng();
-      let sc = 1.0 + 1.5 * rng();
+      let sc = 1.5 + 2.4 * rng();
       if (missed) sc *= k % 2 === 0 ? 0.6 : 0; // sparse, stunted
       this.dScale[i] = sc;
       this.dBirthAttr.setX(i, birth);
@@ -898,16 +946,24 @@ export class CrystalAxis {
     this.u.uScroll.value = this.scrollPos;
     this.u.uStrikeT.value = this.strikeT;
 
-    // Lights: physical falloff (decay 2) — candela-scale intensities.
+    // Lights: physical falloff (decay 2) — candela-scale intensities. The pulse
+    // multiplier stays gentle: newborn crystals sit 1-3u from this light and must
+    // never blow to ACES white (the facets carry the moment, not a blob). The
+    // head light is exposure-compensated by camera distance (captured in the grab
+    // pass) so close zooms don't flood and the idle orbit doesn't starve.
+    const camK = THREE.MathUtils.clamp(this.camDistToHead / CONFIG.ORBIT_RADIUS, 0.28, 1.0);
+    const exposure = camK * camK;
     this.tipLight.intensity =
-      CONFIG.CLUSTER_LIGHT_INTENSITY * (0.8 + 0.2 * breath01) +
-      this.tipPulse * CONFIG.CLUSTER_LIGHT_INTENSITY * 2.2;
+      (CONFIG.CLUSTER_LIGHT_INTENSITY * (0.8 + 0.2 * breath01) +
+        this.tipPulse * CONFIG.CLUSTER_LIGHT_INTENSITY * 1.1) * exposure;
     const emberFlicker = 0.85 + 0.10 * breath01 + 0.05 * Math.sin(t * 2.3);
-    this.emberLight.intensity = CONFIG.CLUSTER_EMBER_INTENSITY * emberFlicker;
+    this.emberLight.intensity = CONFIG.CLUSTER_EMBER_INTENSITY * emberFlicker * (0.45 + 0.55 * exposure);
 
     // Coma + cloud drive — same external semantics as the column/comet eras.
+    // The halo sprite scales with the same exposure (it sits AT the light).
     this.comaMat.uniforms.uTime.value = t;
-    this.comaMat.uniforms.uIntensity.value = 0.08 + 0.04 * breath01 + this.tipPulse * 0.80;
+    this.comaMat.uniforms.uIntensity.value =
+      (0.06 + 0.03 * breath01 + this.tipPulse * 0.55) * (0.30 + 0.70 * exposure);
     this.tipGlowIntensity = CONFIG.TIP_LIGHT_BASE * (0.6 + 0.2 * breath01) + this.tipPulse;
 
     this.updateInstances();
@@ -959,18 +1015,33 @@ export class CrystalAxis {
         grow = x * x * (3 - 2 * x) * (1 + 0.16 * Math.sin(Math.PI * x));
       }
 
-      // --- The slot's crystal (none for a missed slot — the vacancy) ---
+      // --- The slot's crystal clump: main blade + two flankers (none for a
+      // missed slot — the vacancy) ---
+      let fi = 0;
       for (let g = 0; g < 3; g++) {
-        if (g !== v || missed) {
+        if (missed) {
           this.gemMeshes[g].setMatrixAt(ring, CrystalAxis._zeroM);
           continue;
         }
-        const th = this.gemTheta[ring];
+        let th: number, tilt: number, roll: number, lx: number, ly: number, lz: number;
+        if (g === v) {
+          th = this.gemTheta[ring];
+          tilt = this.gemTilt[ring];
+          roll = this.gemRoll[ring];
+          lx = this.gemWidX[ring]; ly = this.gemLen[ring]; lz = this.gemWidZ[ring];
+        } else {
+          const i = ring * 2 + fi;
+          th = this.gemFTheta[i];
+          tilt = this.gemTilt[ring] * (0.75 + 0.5 * fi);
+          roll = this.gemRoll[ring] + 2.1 * (fi + 1);
+          lx = this.gemFWid[i]; ly = this.gemFLen[i]; lz = this.gemFWid[i];
+          fi++;
+        }
         const ct = Math.cos(th), st = Math.sin(th);
         dir.set(
-          N.x * ct + B.x * st - T.x * this.gemTilt[ring],
-          N.y * ct + B.y * st - T.y * this.gemTilt[ring],
-          N.z * ct + B.z * st - T.z * this.gemTilt[ring],
+          N.x * ct + B.x * st - T.x * tilt,
+          N.y * ct + B.y * st - T.y * tilt,
+          N.z * ct + B.z * st - T.z * tilt,
         );
         const dl = dir.length();
         if (dl > 1e-5) dir.multiplyScalar(1 / dl); else dir.set(0, 1, 0);
@@ -980,9 +1051,9 @@ export class CrystalAxis {
           P.z + dir.z * stemR * 0.45,
         );
         q.setFromUnitVectors(up, dir);
-        qR.setFromAxisAngle(up, this.gemRoll[ring]);
+        qR.setFromAxisAngle(up, roll);
         q.multiply(qR);
-        scl.set(this.gemWidX[ring] * grow, this.gemLen[ring] * grow, this.gemWidZ[ring] * grow);
+        scl.set(lx * grow, ly * grow, lz * grow);
         m.compose(pos, q, scl);
         this.gemMeshes[g].setMatrixAt(ring, m);
       }
@@ -1048,6 +1119,86 @@ export class CrystalAxis {
       missed: this.segmentMissed[ringIndex] === 1,
       leaderIndex: this.segmentLeaders[ringIndex],
       slotsBehindHead: this.headProgress - 1 - birth,
+    };
+  }
+
+  /**
+   * Full per-crystal description for the hover tooltip AND the mouse-less
+   * auto-labels (both consume exactly this shape). `anchor` is the live world
+   * position of the crystal's tip (the label/tooltip anchor); for a missed
+   * slot's vacancy it is the spine point where the crystal would have grown.
+   * Uses the previous frame's group transform (fine for label anchoring).
+   */
+  describeCrystal(ringIndex: number): {
+    ringIndex: number;
+    slot: number;
+    missed: boolean;
+    leaderIndex: number;
+    slotsBehindHead: number;
+    age01: number;
+    finalized: boolean;
+    zone: 'nucleating' | 'young' | 'setting' | 'ember' | 'matrix';
+    familyHue: number; // 0 green → 0.5 magenta → 1 purple (Solana axis)
+    anchor: THREE.Vector3;
+  } | null {
+    const info = this.getSegmentInfo(ringIndex);
+    if (!info) return null;
+    const age01 = THREE.MathUtils.clamp(info.slotsBehindHead / CONFIG.FINALITY_DEPTH, 0, 1);
+    const zone =
+      age01 < 0.06 ? 'nucleating' :
+      age01 < 0.35 ? 'young' :
+      age01 < 0.78 ? 'setting' :
+      age01 < 1.0 ? 'ember' : 'matrix';
+
+    const anchor = new THREE.Vector3();
+    if (info.missed) {
+      // The vacancy: anchor on the spine where the crystal would have grown.
+      const sBase = Math.max(
+        CONFIG.CLUSTER_START_S - 1.1,
+        CONFIG.CLUSTER_START_S + (this.scrollPos - 1 - this.segmentBirth[ringIndex]) * CONFIG.CLUSTER_SPACING,
+      );
+      const t = new THREE.Vector3(), n = new THREE.Vector3(), b = new THREE.Vector3();
+      this.frameAt(sBase, anchor, t, n, b);
+    } else {
+      // The main blade's tip: local (0,1,0) through its instance matrix.
+      const im = this.gemMeshes[this.segmentVariant[ringIndex]];
+      im.getMatrixAt(ringIndex, CrystalAxis._m);
+      anchor.set(0, 1, 0).applyMatrix4(CrystalAxis._m);
+    }
+    this.mesh.localToWorld(anchor);
+
+    return {
+      ...info,
+      age01,
+      finalized: age01 >= 1,
+      zone,
+      familyHue: this.segmentHue[ringIndex],
+      anchor,
+    };
+  }
+
+  /**
+   * Live world-space anchors for scripted/presentation camera shots. Recomputed
+   * on call (the group sways) — pair with the CONFIG camera parameters.
+   */
+  getFramingAnchors(): {
+    head: THREE.Vector3;
+    brightCentroid: THREE.Vector3;
+    emberBand: THREE.Vector3;
+    tailFade: THREE.Vector3;
+  } {
+    const emberS = this.u.uEmberS.value as number;
+    const t = new THREE.Vector3(), n = new THREE.Vector3(), b = new THREE.Vector3();
+    const at = (s: number) => {
+      const p = new THREE.Vector3();
+      this.frameAt(s, p, t, n, b);
+      return this.mesh.localToWorld(p);
+    };
+    return {
+      head: this.mesh.localToWorld(new THREE.Vector3(0, 0, 0)),
+      brightCentroid: at(emberS * 0.55),
+      emberBand: at(emberS),
+      tailFade: at(CONFIG.CLUSTER_FADE_S),
     };
   }
 
