@@ -5,22 +5,30 @@ export const CONFIG = {
   CLOUD_OUTER_RADIUS: 150,
   CLOUD_HEIGHT: 100, // ±50
 
-  // Crystalline comet — a tumbling crystal-cluster NUCLEUS (the growth front, where
-  // new slots condense) trailing a curved stream of shards (the ledger: one shard per
-  // slot, gliding away from the nucleus and settling into dark finality). This block
-  // replaces the old quartz-column constants.
+  // Crystalline cluster — a growing AGGREGATE suspended in space (see REFERENCES.md):
+  // each leader (4 slots) raises one radiating spray of terminated prisms in its own
+  // Solana-hue family; each slot nucleates one crystal + a scatter of druzy micro-
+  // crystals at the head of a curved spine. Young growth is saturated transmissive
+  // gem; at finality it crosses a burning amber ember band and settles into the dark
+  // botryoidal matrix stem — the geode shell the cluster grows from, trailing through
+  // space. This block replaces the comet constants (same spine/heartbeat machinery).
   MAX_SEGMENTS: 200,
   FINALITY_DEPTH: 30, // slots behind the head that are "crystallizing" (≈ Solana rooting depth)
-  COMET_NUCLEUS_Y: 24, // world Y where the nucleus is suspended (the fixed growth point)
-  COMET_TAIL_SPACING: 1.4, // arc-length the stream glides per slot — the living zone must CLEAR the coma
-  COMET_TAIL_START: 10, // arc-length behind nucleus center where the shard stream begins
-  COMET_FADE_S: 116, // arc-length where the settled tail dissolves into space (~74 slots of history)
-  COMET_GLIDE_RATE: 9, // easing rate (1/s) of the per-slot tail step — felt as a glide, not a snap
-  COMET_WAVE_SPEED: 30, // accretion pulse speed cascading down the tail (units/s)
-  COMET_SWAY_YAW: 0.021, // rad/s — the whole comet slowly turns like a hanging mobile
-  COMET_TUMBLE_SPEED: 0.07, // rad/s — nucleus self-rotation (facet glints sweep at idle)
-  NUCLEUS_GEM_RADIUS: 11, // gem hull base radius (elongated ~1.5× along the motion axis)
-  SHARD_SIDES: 4, // cross-section of each tail needle (slim blade-like bipyramid)
+  CLUSTER_HEAD_Y: 24, // world Y of the growth front (fixed; beam/camera/light anchor)
+  CLUSTER_SPACING: 1.5, // arc-length the reef glides per slot — dense enough to interlock
+  CLUSTER_START_S: 1.6, // arc-length behind the head where the newest crystal roots
+  CLUSTER_FADE_S: 112, // arc-length where the settled matrix dissolves into space
+  CLUSTER_GLIDE_RATE: 9, // easing rate (1/s) of the per-slot step — felt as a glide, not a snap
+  CLUSTER_WAVE_SPEED: 30, // nucleation pulse speed cascading down the reef (units/s)
+  CLUSTER_SWAY_YAW: 0.019, // rad/s — the whole cluster slowly turns like a hanging mobile
+  CLUSTER_DRUZY_PER_SLOT: 14, // micro-crystals deposited around each slot's crystal
+  CLUSTER_GEM_IOR: 1.78, // refraction strength of young gem material
+  CLUSTER_GEM_DISPERSION: 7.0, // chromatic fire (per-channel ior spread in the refraction)
+  CLUSTER_GEM_THICKNESS: 3.2, // volume thickness (local units, × instance scale)
+  CLUSTER_ATT_DISTANCE: 7.5, // attenuation distance — color-from-within depth
+  CLUSTER_LIGHT_INTENSITY: 170, // physical candela of the head PointLight (decay 2 — newborns sit 1-3u away; keep them out of ACES white)
+  CLUSTER_EMBER_INTENSITY: 160, // candela of the amber finality-band light (sits INSIDE the shell — it backlights the matrix through its crevices)
+  CLUSTER_EMBER_WIDTH: 8.0, // arc-length sigma of the ember band glow
 
   // Timing
   SLOT_INTERVAL: 400, // ms
@@ -62,6 +70,13 @@ export const CONFIG = {
   BLOOM_STRENGTH: 0.6,
   BLOOM_RADIUS: 0.45,
   BLOOM_THRESHOLD: 0.72,
+
+  // Depth of field (BokehPass) — the reference geode's photographic shallow focus.
+  // blur = clamp(|focusDist - fragDist| × aperture, 0, maxblur); gentle by design.
+  // (Points don't write depth, so the validator cloud inherits background depth and
+  // sits at maxblur — keep maxblur soft so the cloud stays readable.)
+  DOF_APERTURE: 0.00008,
+  DOF_MAXBLUR: 0.005,
 
   // Validator-cloud breathing (per-particle, phase-offset in shader)
   BREATH_PERIOD: 8, // seconds (base period; each mineral is phase-offset)

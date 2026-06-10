@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { BokehPass } from 'three/examples/jsm/postprocessing/BokehPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { CONFIG } from '../utils/config';
 import {
@@ -12,13 +13,19 @@ import {
 } from '../shaders/postprocessing';
 
 /**
- * Post-processing pipeline: bloom → color grading → vignette → film grain → chromatic aberration
+ * Post-processing pipeline: DoF (bokeh) → bloom → color grading → vignette →
+ * film grain → chromatic aberration. The DoF sits before bloom (defocused
+ * highlights soften INTO bokeh instead of blooming); the established
+ * bloom → grade → vignette → grain → CA order is preserved.
  */
 export class PostProcessing {
   readonly composer: EffectComposer;
   private filmGrainPass: ShaderPass;
   private caPass: ShaderPass;
   private bloomPass: UnrealBloomPass;
+  private bokehPass: BokehPass;
+  private camera: THREE.Camera;
+  private focusTarget = new THREE.Vector3(0, CONFIG.CLUSTER_HEAD_Y, 0);
   private bloomBoost = 0; // ceremony swell above the base strength, decays in update()
 
   constructor(
@@ -28,11 +35,21 @@ export class PostProcessing {
     width: number,
     height: number,
   ) {
+    this.camera = camera;
     this.composer = new EffectComposer(renderer);
 
     // Render pass
     const renderPass = new RenderPass(scene, camera);
     this.composer.addPass(renderPass);
+
+    // Depth of field — the photographic look of the reference geode shot: the
+    // cluster in focus, the world soft. Focus tracks the growth head each frame.
+    this.bokehPass = new BokehPass(scene, camera, {
+      focus: CONFIG.ORBIT_RADIUS,
+      aperture: CONFIG.DOF_APERTURE,
+      maxblur: CONFIG.DOF_MAXBLUR,
+    });
+    this.composer.addPass(this.bokehPass);
 
     // Bloom
     this.bloomPass = new UnrealBloomPass(
@@ -108,7 +125,14 @@ export class PostProcessing {
       if (this.bloomBoost < 0.001) this.bloomBoost = 0;
     }
     this.bloomPass.strength = CONFIG.BLOOM_STRENGTH + this.bloomBoost;
+
+    // Keep the focal plane on the cluster head as the camera orbits/zooms.
+    const focusDist = this.camera.getWorldPosition(PostProcessing._camPos)
+      .distanceTo(this.focusTarget);
+    (this.bokehPass.uniforms as Record<string, THREE.IUniform>).focus.value = focusDist;
   }
+
+  private static _camPos = new THREE.Vector3();
 
   render(): void {
     this.composer.render();

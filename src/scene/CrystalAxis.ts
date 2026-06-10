@@ -1,57 +1,60 @@
 import * as THREE from 'three';
-import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js';
 import {
-  shardVertexShader, shardFragmentShader,
-  nucleusVertexShader, nucleusFragmentShader,
-  ribbonVertexShader, ribbonFragmentShader,
+  applyGemPatches, applySolidPatches, applyStemPatches,
+  type ClusterUniforms,
 } from '../shaders/crystal';
 import { flareVertexShader, flareFragmentShader } from '../shaders/flare';
 import { CONFIG } from '../utils/config';
 import { COLORS } from '../utils/colors';
 
 /**
- * THE CRYSTALLINE COMET — Solana's ledger as a living comet suspended in space.
+ * THE CRYSTALLINE CLUSTER — Solana's ledger as a growing mineral aggregate
+ * suspended in space (REFERENCES.md is the canon; judge against it).
  *
- * NUCLEUS  — a tumbling crystal cluster at a fixed point above the scene's heart:
- *            the growth front, where each slot's block condenses out of the leader's
- *            light. Wrapped in a soft coma; a real PointLight rides it.
- * TAIL     — the record. ONE shard per real slot, strung along a curved path that
- *            sweeps down and behind the nucleus. Every slot the whole stream glides
- *            one spacing away (the 400ms heartbeat, eased — felt as flow). Young
- *            shards are icy, luminous, loosely scattered and trembling; with
- *            finality they align, darken and fuse into a tight indigo braid that
- *            dissolves into space. Missed slots are dark cinders, knocked slightly
- *            out of the braid — permanent flaws that never ignite.
- * ACCRETION— the per-slot moment: the leader's droplet lands (orchestrator calls
- *            strike() on packet arrival), the nucleus blooms warm-then-icy, the
- *            newest shard ignites, and a pulse of light cascades down the tail —
- *            the record absorbing the block.
+ * SPINE   — a fixed curved path sweeping down and behind the growth head. The
+ *           whole record glides one spacing along it per slot (the 400 ms
+ *           heartbeat, eased — felt as growth, not a ticker).
+ * SPRAYS  — each leader (4 slots) raises one radiating spray of terminated
+ *           prisms at its own azimuth, in its own Solana-hue family (purple /
+ *           magenta / green — saturated, never pastel). Each produced slot
+ *           nucleates ONE crystal of that spray (the first of the four is the
+ *           leader's dominant blade) plus a scatter of druzy micro-crystals.
+ *           Crystals are real MeshPhysicalMaterial bodies: environment-lit,
+ *           clearcoated, iridescent, REFRACTING the live scene (full-scene
+ *           grab pass — stars and the amber validator cloud bend through the
+ *           young stones) with per-channel dispersion.
+ * MATRIX  — finality. Aging crystals converge to deep violet, cross the
+ *           burning amber EMBER BAND at rooting depth (~30 slots), and settle
+ *           into dark rough matrix fused to the botryoidal stem — the geode
+ *           shell the cluster grows from — finally dissolving into space.
+ * MISSED  — a vacancy: no crystal, only a sparse pocket of lightless cinder
+ *           micros. Never celebrated.
  *
- * PUBLIC API (consumed by the orchestrator — names kept from the column era, with
- * shifted meaning, documented here):
- *   mesh              — the tail-stream Mesh (root of the whole comet; nucleus,
- *                       spine, coma and tipLight are children). name: 'comet-tail'.
- *   tipLight          — PointLight at the NUCLEUS (the fixed growth point).
+ * PUBLIC API (consumed by the orchestrator — names kept from the column era,
+ * meaning shifted, documented here):
+ *   mesh              — THREE.Group root of the whole cluster (head at local
+ *                       origin = world (0, CLUSTER_HEAD_Y, 0)). name: 'crystal-cluster'.
+ *   tipLight          — PointLight at the growth head (physical-units intensity).
  *   addSegment(missed, slot?, leaderIndex?) — one call per real slot. Optional
  *                       metadata args are additive (orchestrator hook requested).
- *   strike()          — the accretion moment (packet arrival).
- *   update(dt)        — per-frame animation; shard transforms are CPU-side so
- *                       raycasts against the rendered geometry are exact.
- *   getGrowthPointY() — the NUCLEUS's fixed world Y (CONFIG.COMET_NUCLEUS_Y).
- *   tipGlowIntensity  — nucleus light drive consumed by the validator cloud.
+ *   strike()          — the nucleation moment (leader packet arrival).
+ *   update(dt)        — per-frame animation; instance transforms are CPU-side so
+ *                       raycasts against rendered geometry are exact.
+ *   getGrowthPointY() — the head's fixed world Y (CONFIG.CLUSTER_HEAD_Y).
+ *   tipGlowIntensity  — cloud-illumination drive (kept on the legacy 0..~3 scale).
  *
- * RAYCAST → SEGMENT MAPPING (for the tree-ring hover feature):
- *   Raycast against `mesh` (non-indexed; three respects drawRange). For a hit:
- *     ringIndex = Math.floor(intersection.faceIndex / TRIS_PER_SHARD)
- *   then call getSegmentInfoFromFaceIndex(intersection.faceIndex) which resolves
- *   the ring slot to { slot, missed, leaderIndex, slotsBehindHead } (or null for
- *   stale/never-written slots). Hits on the child named 'comet-nucleus' mean "the
- *   forming block" — present the current head slot.
+ * RAYCAST → CRYSTAL MAPPING (for the tree-ring hover feature):
+ *   Raycast against the meshes in `raycastTargets` (the three gem InstancedMesh
+ *   variants, named 'cluster-gems-0/1/2'). For a hit:
+ *     info = getSegmentInfo(intersection.instanceId)
+ *   instanceId IS the ring index on every variant. Returns
+ *   { ringIndex, slot, missed, leaderIndex, slotsBehindHead } or null for
+ *   never-written / recycled / vacant rings.
  */
 export class CrystalAxis {
-  /** Tail-stream mesh; root of the comet group (children: nucleus, spine, coma, light). */
-  readonly mesh: THREE.Mesh;
-  /** Real point light at the nucleus — blooms each accretion, lights nearby validators. */
+  /** Group root of the cluster (gems, druzy, stem, lights, coma are children). */
+  readonly mesh: THREE.Group;
+  /** Real point light at the growth head — blooms each nucleation. */
   readonly tipLight: THREE.PointLight;
   /** Cloud-illumination drive (steady wash + per-slot bloom), consumed by ValidatorCloud. */
   tipGlowIntensity: number = CONFIG.TIP_LIGHT_BASE;
@@ -64,52 +67,65 @@ export class CrystalAxis {
   /** Leader validator index per segment (-1 unknown; hover feature). */
   readonly segmentLeaders: Int32Array;
 
-  static readonly TRIS_PER_SHARD = CONFIG.SHARD_SIDES * 2;
-  static readonly VERTS_PER_SHARD = CONFIG.SHARD_SIDES * 2 * 3;
-
   // --- Internals -------------------------------------------------------------------
-  private tailGeo: THREE.BufferGeometry;
-  private tailMat: THREE.ShaderMaterial;
-  private nucleus: THREE.Mesh;
-  private nucleusMat: THREE.ShaderMaterial;
-  private ribbons: THREE.Mesh[] = [];
-  private ribbonMats: THREE.ShaderMaterial[] = [];
+  private readonly maxSegments = CONFIG.MAX_SEGMENTS;
+  private readonly druzyPerSlot = CONFIG.CLUSTER_DRUZY_PER_SLOT;
+
+  private gemMeshes: THREE.InstancedMesh[] = [];
+  private druzyMesh: THREE.InstancedMesh;
+  private stem: THREE.Mesh;
   private coma: THREE.Points;
   private comaMat: THREE.ShaderMaterial;
-  // Screen-space refraction: the scene (minus the gem) grabbed each frame.
+  private emberLight: THREE.PointLight;
+
+  private gemMat: THREE.MeshPhysicalMaterial;
+  private druzyMat: THREE.MeshPhysicalMaterial;
+  private stemMat: THREE.MeshStandardMaterial;
+
+  /** Shared uniform record merged into every patched material (live updates). */
+  private u: ClusterUniforms;
+
+  // Full-scene grab for the gem refraction (Reflector pattern — the stock
+  // transmission pass only renders opaque objects; our sky is transparent points).
   private grabRT: THREE.WebGLRenderTarget | null = null;
   private grabbing = false;
   private grabSize = new THREE.Vector2();
+  private envRT: THREE.WebGLRenderTarget | null = null;
 
-  private readonly maxSegments = CONFIG.MAX_SEGMENTS;
   private headProgress = 0;   // segments added (absolute)
   private scrollPos = 0;      // eased follower of headProgress — the felt heartbeat
   private timeAcc = 0;
-  private strikeT = 99;       // seconds since last accretion (starts "long ago")
+  private strikeT = 99;       // seconds since last nucleation (starts "long ago")
   private tipPulse = 0;
-  private tumbleAxis = new THREE.Vector3();
+  private lastProducedBirth = -1e9;
 
   // Per-segment state (ring buffers)
   private segmentBirth: Float64Array;     // absolute index at write time (-1 empty)
-  private segmentBirthTime: Float32Array; // for the condensation scale-in
-  private flashes: Float32Array;          // per-segment ignition energy (decays)
-  private shardJitterTheta: Float32Array; // braid offset direction around the spine
-  private shardJitterMag: Float32Array;   // braid offset magnitude factor
-  private shardSeed: Float32Array;
-  // Baked local shard geometry (tilt/roll folded in): VERTS_PER_SHARD per segment
-  private shardLocalPos: Float32Array;
-  private shardLocalNrm: Float32Array;
+  private segmentBirthTime: Float32Array; // for the nucleation scale-in
+  private segmentVariant: Uint8Array;     // gem habit per segment (leader-stable)
+  private gemTheta: Float32Array;         // azimuth around the spine
+  private gemTilt: Float32Array;          // head-ward lean
+  private gemRoll: Float32Array;
+  private gemLen: Float32Array;
+  private gemWidX: Float32Array;
+  private gemWidZ: Float32Array;
+  // Druzy micro statics (maxSegments × druzyPerSlot)
+  private dTheta: Float32Array;
+  private dSOff: Float32Array;
+  private dScale: Float32Array;
+  private dTilt: Float32Array;
 
-  // Dynamic GPU attributes
-  private posAttr: THREE.BufferAttribute;
-  private nrmAttr: THREE.BufferAttribute;
-  private glowAttr: THREE.BufferAttribute;
-  private ageAttr: THREE.BufferAttribute;
-  private sAttr: THREE.BufferAttribute;
-  private seedAttr: THREE.BufferAttribute;
-  private missedAttr: THREE.BufferAttribute;
+  // Per-variant instanced attributes (kept for partial re-seeding on ring reuse)
+  private gemBirthAttr: THREE.InstancedBufferAttribute[] = [];
+  private gemHueAttr: THREE.InstancedBufferAttribute[] = [];
+  private gemSeedAttr: THREE.InstancedBufferAttribute[] = [];
+  private gemMissedAttr: THREE.InstancedBufferAttribute[] = [];
+  private dBirthAttr: THREE.InstancedBufferAttribute;
+  private dHueAttr: THREE.InstancedBufferAttribute;
+  private dSeedAttr: THREE.InstancedBufferAttribute;
+  private dMissedAttr: THREE.InstancedBufferAttribute;
 
-  // Tail curve lookup tables (uniform arc-length; local space, nucleus at origin)
+  // Spine lookup tables (uniform arc-length; local space, head at origin)
   private static readonly CURVE_RES = 512;
   private curvePos: Float32Array;
   private curveT: Float32Array;
@@ -119,17 +135,20 @@ export class CrystalAxis {
   private curveDs = 1;
 
   constructor() {
-    // ================= Tail curve: a graceful sweep down and behind ================
-    // Cubic Bézier, then resampled to uniform arc length with parallel-transport
-    // frames (no twist pops). The comet's silhouette cycles S-curve → C-curve →
-    // diagonal as it sways past the orbiting camera.
+    this.mesh = new THREE.Group();
+    this.mesh.name = 'crystal-cluster';
+    this.mesh.position.set(0, CONFIG.CLUSTER_HEAD_Y, 0); // head = local origin
+
+    // ================= Spine: a graceful sweep down and behind =====================
+    // Same construction as the comet era (cubic Bézier → uniform arc-length resample
+    // → parallel-transport frames; no twist pops). Proven composition with the
+    // camera orbit and the validator cloud.
     {
       const b0 = new THREE.Vector3(0, 0, 0);
       const b1 = new THREE.Vector3(6, -40, -4);
       const b2 = new THREE.Vector3(30, -78, 10);
       const b3 = new THREE.Vector3(78, -106, 26);
       const R = CrystalAxis.CURVE_RES;
-      // Dense pre-sample for arc-length mapping
       const PRE = 1024;
       const pre: THREE.Vector3[] = [];
       const cum = new Float32Array(PRE);
@@ -152,7 +171,6 @@ export class CrystalAxis {
       this.curveT = new Float32Array(R * 3);
       this.curveN = new Float32Array(R * 3);
       this.curveB = new Float32Array(R * 3);
-      // Uniform-s resample
       let j = 0;
       for (let i = 0; i < R; i++) {
         const s = i * this.curveDs;
@@ -162,7 +180,6 @@ export class CrystalAxis {
         const p = new THREE.Vector3().lerpVectors(pre[j], pre[j + 1], f);
         this.curvePos.set([p.x, p.y, p.z], i * 3);
       }
-      // Tangents (central differences) + parallel-transport normal/binormal
       const t0 = new THREE.Vector3();
       const n0 = new THREE.Vector3();
       const tmp = new THREE.Vector3();
@@ -178,12 +195,10 @@ export class CrystalAxis {
         t0.normalize();
         this.curveT.set([t0.x, t0.y, t0.z], i * 3);
         if (i === 0) {
-          // Initial normal: anything perpendicular to T (guard near-vertical T)
           tmp.set(1, 0, 0);
           if (Math.abs(t0.dot(tmp)) > 0.9) tmp.set(0, 0, 1);
           n0.crossVectors(t0, tmp).normalize();
         } else {
-          // Transport previous normal: remove new-tangent component, renormalize
           n0.addScaledVector(t0, -n0.dot(t0));
           if (n0.lengthSq() < 1e-10) n0.set(1, 0, 0);
           n0.normalize();
@@ -194,208 +209,197 @@ export class CrystalAxis {
       }
     }
 
-    // ================= Tail stream (one shard per slot) ============================
-    const VPS = CrystalAxis.VERTS_PER_SHARD;
-    const maxSeg = this.maxSegments;
-    const totalVerts = maxSeg * VPS;
+    // ================= Shared uniforms ==============================================
+    const emberS = CONFIG.CLUSTER_START_S + CONFIG.FINALITY_DEPTH * CONFIG.CLUSTER_SPACING;
+    this.u = {
+      uTime: { value: 0 },
+      uBreath: { value: 0.5 },
+      uScroll: { value: 0 },
+      uSpacing: { value: CONFIG.CLUSTER_SPACING },
+      uStartS: { value: CONFIG.CLUSTER_START_S },
+      uFinality: { value: CONFIG.FINALITY_DEPTH },
+      uFadeS: { value: CONFIG.CLUSTER_FADE_S },
+      uEmberS: { value: emberS },
+      uEmberW: { value: CONFIG.CLUSTER_EMBER_WIDTH },
+      uFlashE: { value: 0 },
+      uStruckBirth: { value: -1e9 },
+      uStrikeT: { value: 99 },
+      uWaveSpeed: { value: CONFIG.CLUSTER_WAVE_SPEED },
+      uFamPurple: { value: COLORS.CRYSTAL_PURPLE.clone() },
+      uFamMagenta: { value: COLORS.CRYSTAL_MAGENTA.clone() },
+      uFamGreen: { value: COLORS.CRYSTAL_GREEN.clone() },
+      uMatrixCol: { value: COLORS.CRYSTAL_OLD.clone() },
+      uEmberCol: { value: COLORS.CRYSTAL_AMBER.clone() },
+      uCoreCol: { value: COLORS.CRYSTAL_CORE.clone() },
+      uGemRough: { value: 0.07 },
+      uMatrixRough: { value: 0.58 },
+      uGrabTex: { value: null },
+      uGrabSize: { value: new THREE.Vector2(2, 2) },
+      uCluIor: { value: CONFIG.CLUSTER_GEM_IOR },
+      uCluThickness: { value: CONFIG.CLUSTER_GEM_THICKNESS },
+      uCluDispersion: { value: CONFIG.CLUSTER_GEM_DISPERSION },
+      uCluAttDist: { value: CONFIG.CLUSTER_ATT_DISTANCE },
+    };
 
+    // ================= Materials ====================================================
+    // Real physical surfaces — the difference between "beautiful artifact" and
+    // "game item". Data behavior is injected, never hand-rolled lighting.
+    this.gemMat = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      metalness: 0.0,
+      roughness: 0.07,
+      clearcoat: 0.55,
+      clearcoatRoughness: 0.22,
+      iridescence: 0.30,
+      iridescenceIOR: 1.32,
+      ior: CONFIG.CLUSTER_GEM_IOR,
+      envMapIntensity: 1.1,
+      // transmission stays 0 deliberately: the mesh keeps opaque-pass depth and we
+      // run our own full-scene volume refraction (see shaders/crystal.ts).
+    });
+    this.gemMat.onBeforeCompile = (shader) => applyGemPatches(shader, this.u);
+    this.gemMat.customProgramCacheKey = () => 'cluster-gem-v1';
+
+    this.druzyMat = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      metalness: 0.0,
+      roughness: 0.13,
+      clearcoat: 0.35,
+      clearcoatRoughness: 0.25,
+      iridescence: 0.5,            // the aura-quartz sheen lives on the micro-glitter
+      iridescenceIOR: 1.35,
+      envMapIntensity: 1.8,
+    });
+    this.druzyMat.onBeforeCompile = (shader) => applySolidPatches(shader, this.u);
+    this.druzyMat.customProgramCacheKey = () => 'cluster-druzy-v1';
+
+    this.stemMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      metalness: 0.05,
+      roughness: 0.7,
+      envMapIntensity: 0.4,
+    });
+    this.stemMat.onBeforeCompile = (shader) => applyStemPatches(shader, this.u);
+    this.stemMat.customProgramCacheKey = () => 'cluster-stem-v1';
+
+    // ================= State arrays =================================================
+    const maxSeg = this.maxSegments;
+    const K = this.druzyPerSlot;
     this.segmentSlots = new Array(maxSeg).fill(-1);
     this.segmentMissed = new Uint8Array(maxSeg);
     this.segmentLeaders = new Int32Array(maxSeg).fill(-1);
     this.segmentBirth = new Float64Array(maxSeg).fill(-1);
     this.segmentBirthTime = new Float32Array(maxSeg);
-    this.flashes = new Float32Array(maxSeg);
-    this.shardJitterTheta = new Float32Array(maxSeg);
-    this.shardJitterMag = new Float32Array(maxSeg);
-    this.shardSeed = new Float32Array(maxSeg);
-    this.shardLocalPos = new Float32Array(totalVerts * 3);
-    this.shardLocalNrm = new Float32Array(totalVerts * 3);
+    this.segmentVariant = new Uint8Array(maxSeg);
+    this.gemTheta = new Float32Array(maxSeg);
+    this.gemTilt = new Float32Array(maxSeg);
+    this.gemRoll = new Float32Array(maxSeg);
+    this.gemLen = new Float32Array(maxSeg);
+    this.gemWidX = new Float32Array(maxSeg);
+    this.gemWidZ = new Float32Array(maxSeg);
+    this.dTheta = new Float32Array(maxSeg * K);
+    this.dSOff = new Float32Array(maxSeg * K);
+    this.dScale = new Float32Array(maxSeg * K);
+    this.dTilt = new Float32Array(maxSeg * K);
 
-    this.tailGeo = new THREE.BufferGeometry();
-    this.posAttr = new THREE.BufferAttribute(new Float32Array(totalVerts * 3), 3);
-    this.nrmAttr = new THREE.BufferAttribute(new Float32Array(totalVerts * 3), 3);
-    this.glowAttr = new THREE.BufferAttribute(new Float32Array(totalVerts), 1);
-    this.ageAttr = new THREE.BufferAttribute(new Float32Array(totalVerts), 1);
-    this.sAttr = new THREE.BufferAttribute(new Float32Array(totalVerts), 1);
-    this.seedAttr = new THREE.BufferAttribute(new Float32Array(totalVerts), 1);
-    this.missedAttr = new THREE.BufferAttribute(new Float32Array(totalVerts), 1);
-    const uvAttr = new THREE.BufferAttribute(new Float32Array(totalVerts * 2), 2);
-    for (const a of [this.posAttr, this.nrmAttr, this.glowAttr, this.ageAttr, this.sAttr]) {
-      a.setUsage(THREE.DynamicDrawUsage);
+    // ================= Gem variant meshes ===========================================
+    // Three crystal habits — families of terminated prisms, never one clean gem.
+    const habits: Array<'stout' | 'blade' | 'twin'> = ['stout', 'blade', 'twin'];
+    for (let v = 0; v < 3; v++) {
+      const geo = CrystalAxis.buildCrystalGeometry(habits[v], 0xc1 + v * 37);
+      const birth = new THREE.InstancedBufferAttribute(new Float32Array(maxSeg).fill(-1e9), 1);
+      const hue = new THREE.InstancedBufferAttribute(new Float32Array(maxSeg), 1);
+      const seed = new THREE.InstancedBufferAttribute(new Float32Array(maxSeg), 1);
+      const missed = new THREE.InstancedBufferAttribute(new Float32Array(maxSeg), 1);
+      geo.setAttribute('aBirth', birth);
+      geo.setAttribute('aHue', hue);
+      geo.setAttribute('aSeed', seed);
+      geo.setAttribute('aMissed', missed);
+      this.gemBirthAttr.push(birth);
+      this.gemHueAttr.push(hue);
+      this.gemSeedAttr.push(seed);
+      this.gemMissedAttr.push(missed);
+
+      const im = new THREE.InstancedMesh(geo, this.gemMat, maxSeg);
+      im.name = `cluster-gems-${v}`;
+      im.frustumCulled = false;
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      for (let i = 0; i < maxSeg; i++) im.setMatrixAt(i, CrystalAxis._zeroM);
+      im.instanceMatrix.needsUpdate = true;
+      this.gemMeshes.push(im);
+      this.mesh.add(im);
     }
-    this.tailGeo.setAttribute('position', this.posAttr);
-    this.tailGeo.setAttribute('normal', this.nrmAttr);
-    this.tailGeo.setAttribute('uv', uvAttr);
-    this.tailGeo.setAttribute('aGlow', this.glowAttr);
-    this.tailGeo.setAttribute('aAge', this.ageAttr);
-    this.tailGeo.setAttribute('aS', this.sAttr);
-    this.tailGeo.setAttribute('aSeed', this.seedAttr);
-    this.tailGeo.setAttribute('aMissed', this.missedAttr);
-    this.tailGeo.setDrawRange(0, 0); // non-indexed: counts VERTICES
 
-    this.tailMat = new THREE.ShaderMaterial({
-      vertexShader: shardVertexShader,
-      fragmentShader: shardFragmentShader,
-      uniforms: {
-        uTime: { value: 0 },
-        uBreath: { value: 0.5 },
-        uTipPulse: { value: 0 },
-        uFadeS: { value: CONFIG.COMET_FADE_S },
-        uYoungColor: { value: COLORS.CRYSTAL_YOUNG.clone() },
-        uSettingColor: { value: COLORS.CRYSTAL_SETTING.clone() },
-        uFinalColor: { value: COLORS.CRYSTAL_OLD.clone() },
-        uCoreColor: { value: COLORS.CRYSTAL_CORE.clone() },
-      },
-      transparent: true,
-      depthWrite: true,
-      side: THREE.FrontSide,
-    });
-
-    this.mesh = new THREE.Mesh(this.tailGeo, this.tailMat);
-    this.mesh.name = 'comet-tail';
-    this.mesh.frustumCulled = false;
-    this.mesh.position.set(0, CONFIG.COMET_NUCLEUS_Y, 0); // nucleus = local origin
-
-    // ================= Nucleus: a refractive cut gem ================================
-    const nucleusGeo = this.buildNucleusGeometry();
-    this.nucleusMat = new THREE.ShaderMaterial({
-      vertexShader: nucleusVertexShader,
-      fragmentShader: nucleusFragmentShader,
-      uniforms: {
-        uTime: { value: 0 },
-        uBreath: { value: 0.5 },
-        uTipPulse: { value: 0 },
-        uNucleusRadius: { value: CONFIG.NUCLEUS_GEM_RADIUS * 1.6 },
-        uGrabTex: { value: null },
-        uGrabRes: { value: new THREE.Vector2(1, 1) },
-        uRefractK: { value: 1.15 },
-        uYoungColor: { value: COLORS.CRYSTAL_YOUNG.clone() },
-        uSettingColor: { value: COLORS.CRYSTAL_SETTING.clone() },
-        uCoreColor: { value: COLORS.CRYSTAL_CORE.clone() },
-        uInclusionColor: { value: COLORS.CRYSTAL_AMBER.clone() },
-        uWarmColor: { value: COLORS.TIP_LIGHT.clone() },
-      },
-      transparent: true,
-      depthWrite: true,
-      side: THREE.FrontSide,
-    });
-    this.nucleus = new THREE.Mesh(nucleusGeo, this.nucleusMat);
-    this.nucleus.name = 'comet-nucleus';
-    this.nucleus.frustumCulled = false;
-    this.mesh.add(this.nucleus);
-    this.tumbleAxis.set(this.curveT[0], this.curveT[1], this.curveT[2]).normalize();
-
-    // Grab pass (three's Reflector pattern): before the gem renders, render the
-    // scene WITHOUT it into a half-res target the gem's shader refracts. Nested
-    // renders inside onBeforeRender are the sanctioned approach (Reflector ships
-    // on it); the `grabbing` flag prevents recursion, and hiding the gem prevents
-    // its own onBeforeRender from re-firing inside the nested render.
-    this.nucleus.onBeforeRender = (renderer, scene, camera) => {
-      if (this.grabbing) return;
-      this.grabbing = true;
-
-      renderer.getDrawingBufferSize(this.grabSize);
-      const gw = Math.max(2, Math.floor(this.grabSize.x / 2));
-      const gh = Math.max(2, Math.floor(this.grabSize.y / 2));
-      if (!this.grabRT || this.grabRT.width !== gw || this.grabRT.height !== gh) {
-        this.grabRT?.dispose();
-        this.grabRT = new THREE.WebGLRenderTarget(gw, gh, {
-          minFilter: THREE.LinearFilter,
-          magFilter: THREE.LinearFilter,
-          depthBuffer: true,
-        });
-      }
-
-      const prevRT = renderer.getRenderTarget();
-      const prevXr = renderer.xr.enabled;
-      const prevShadow = renderer.shadowMap.autoUpdate;
-      const prevAutoClear = renderer.autoClear;
-      renderer.xr.enabled = false;
-      renderer.shadowMap.autoUpdate = false;
-      renderer.autoClear = true;
-
-      // Hide the gem AND its own halo: refracting your own glow reads as milk.
-      this.nucleus.visible = false;
-      const comaWasVisible = this.coma.visible;
-      this.coma.visible = false;
-      renderer.setRenderTarget(this.grabRT);
-      renderer.render(scene, camera);
-      this.nucleus.visible = true;
-      this.coma.visible = comaWasVisible;
-
-      renderer.xr.enabled = prevXr;
-      renderer.shadowMap.autoUpdate = prevShadow;
-      renderer.autoClear = prevAutoClear;
-      renderer.setRenderTarget(prevRT);
-
-      this.nucleusMat.uniforms.uGrabTex.value = this.grabRT.texture;
-      (this.nucleusMat.uniforms.uGrabRes.value as THREE.Vector2).copy(this.grabSize);
-      this.grabbing = false;
+    // The grab + environment hook rides the first gem mesh (renders once per frame).
+    this.gemMeshes[0].onBeforeRender = (renderer, scene, camera) => {
+      this.runGrabPass(renderer, scene as THREE.Scene, camera);
     };
 
-    // ================= Tail body: layered ribbon volumes ===========================
-    // Three camera-facing light layers along the curve: a bright core sheet and two
-    // offset streamers. They carry the comet-tail read; shards carry the data.
-    const layers = [
-      { phi: 0.0, r0: 0.0, width: 7.5, intensity: 0.62, flow: 7.0, seed: 0.13 },
-      { phi: 2.1, r0: 1.5, width: 4.6, intensity: 0.30, flow: 9.5, seed: 0.57 },
-      { phi: 4.4, r0: 1.2, width: 3.4, intensity: 0.22, flow: 5.5, seed: 0.91 },
-    ];
-    for (const L of layers) {
-      const geo = this.buildRibbonGeometry(L.phi, L.r0);
-      const mat = new THREE.ShaderMaterial({
-        vertexShader: ribbonVertexShader,
-        fragmentShader: ribbonFragmentShader,
-        uniforms: {
-          uTime: { value: 0 },
-          uBreath: { value: 0.5 },
-          uTipPulse: { value: 0 },
-          uStrikeT: { value: 99 },
-          uWaveSpeed: { value: CONFIG.COMET_WAVE_SPEED },
-          uHistoryS: { value: 0 },
-          uSettleS: { value: CONFIG.COMET_TAIL_START + CONFIG.FINALITY_DEPTH * CONFIG.COMET_TAIL_SPACING },
-          uWidth: { value: L.width },
-          uIntensity: { value: L.intensity },
-          uFlow: { value: L.flow },
-          uSeed: { value: L.seed },
-          uFadeS: { value: CONFIG.COMET_FADE_S },
-          uYoungColor: { value: COLORS.CRYSTAL_YOUNG.clone() },
-          uSettingColor: { value: COLORS.CRYSTAL_SETTING.clone() },
-          uCoreColor: { value: COLORS.CRYSTAL_CORE.clone() },
-        },
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        side: THREE.DoubleSide,
-      });
-      const m = new THREE.Mesh(geo, mat);
-      m.name = 'comet-ribbon';
-      m.frustumCulled = false;
-      this.mesh.add(m);
-      this.ribbons.push(m);
-      this.ribbonMats.push(mat);
+    // ================= Druzy micro-crystal mesh =====================================
+    {
+      const geo = CrystalAxis.buildDruzyGeometry(0x5eed);
+      const n = maxSeg * K;
+      this.dBirthAttr = new THREE.InstancedBufferAttribute(new Float32Array(n).fill(-1e9), 1);
+      this.dHueAttr = new THREE.InstancedBufferAttribute(new Float32Array(n), 1);
+      this.dSeedAttr = new THREE.InstancedBufferAttribute(new Float32Array(n), 1);
+      this.dMissedAttr = new THREE.InstancedBufferAttribute(new Float32Array(n), 1);
+      geo.setAttribute('aBirth', this.dBirthAttr);
+      geo.setAttribute('aHue', this.dHueAttr);
+      geo.setAttribute('aSeed', this.dSeedAttr);
+      geo.setAttribute('aMissed', this.dMissedAttr);
+
+      this.druzyMesh = new THREE.InstancedMesh(geo, this.druzyMat, n);
+      this.druzyMesh.name = 'cluster-druzy';
+      this.druzyMesh.frustumCulled = false;
+      this.druzyMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      for (let i = 0; i < n; i++) this.druzyMesh.setMatrixAt(i, CrystalAxis._zeroM);
+      this.druzyMesh.instanceMatrix.needsUpdate = true;
+      this.druzyMesh.raycast = () => { /* data hover targets the gems only */ };
+      this.mesh.add(this.druzyMesh);
     }
 
-    // ================= Light + coma ================================================
+    // ================= Matrix stem ==================================================
+    this.stem = new THREE.Mesh(this.buildStemGeometry(0xa11a), this.stemMat);
+    this.stem.name = 'cluster-stem';
+    this.stem.frustumCulled = false;
+    this.stem.raycast = () => { /* not a data surface */ };
+    this.mesh.add(this.stem);
+
+    // ================= Lights =======================================================
     this.tipLight = new THREE.PointLight(
       COLORS.TIP_LIGHT.getHex(),
-      CONFIG.TIP_LIGHT_BASE,
+      CONFIG.CLUSTER_LIGHT_INTENSITY,
       CONFIG.TIP_LIGHT_DISTANCE,
       2,
     );
-    this.tipLight.position.set(0, 0, 0); // local origin = nucleus center
+    this.tipLight.position.set(0, 0, 0);
     this.mesh.add(this.tipLight);
 
+    this.emberLight = new THREE.PointLight(
+      COLORS.CRYSTAL_AMBER.getHex(),
+      CONFIG.CLUSTER_EMBER_INTENSITY,
+      70,
+      2,
+    );
+    {
+      const p = new THREE.Vector3(), t = new THREE.Vector3();
+      const n = new THREE.Vector3(), b = new THREE.Vector3();
+      this.frameAt(emberS, p, t, n, b);
+      this.emberLight.position.copy(p);
+    }
+    this.mesh.add(this.emberLight);
+
+    // ================= Coma — the nucleation halo at the head ======================
     const comaGeo = new THREE.BufferGeometry();
     comaGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
     this.comaMat = new THREE.ShaderMaterial({
       vertexShader: flareVertexShader,
       fragmentShader: flareFragmentShader,
       uniforms: {
-        uSize: { value: 38 },
+        uSize: { value: 15 },
         uIntensity: { value: 0 },
-        uColor: { value: COLORS.TIP_LIGHT.clone() },
-        uIceColor: { value: COLORS.CRYSTAL_CORE.clone() },
+        uColor: { value: COLORS.CRYSTAL_AMBER.clone() },
+        uIceColor: { value: COLORS.CRYSTAL_YOUNG.clone() },
         uTime: { value: 0 },
       },
       transparent: true,
@@ -403,12 +407,19 @@ export class CrystalAxis {
       blending: THREE.AdditiveBlending,
     });
     this.coma = new THREE.Points(comaGeo, this.comaMat);
-    this.coma.name = 'comet-coma';
+    this.coma.name = 'cluster-coma';
     this.coma.frustumCulled = false;
     this.mesh.add(this.coma);
   }
 
-  // --- Deterministic per-shard RNG (stable across ring reuse) ---------------------
+  private static _zeroM = new THREE.Matrix4().makeScale(0, 0, 0);
+
+  /** Gem meshes for the hover feature — intersection.instanceId is the ring index. */
+  get raycastTargets(): THREE.Object3D[] {
+    return this.gemMeshes;
+  }
+
+  // --- Deterministic per-slot RNG (stable across ring reuse) ----------------------
   private static mulberry32(seed: number): () => number {
     let a = seed >>> 0;
     return () => {
@@ -417,6 +428,24 @@ export class CrystalAxis {
       t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
+  }
+
+  /** Tiny CPU value-noise (geometry baking only). */
+  private static vnoise3(x: number, y: number, z: number): number {
+    const h = (xi: number, yi: number, zi: number) => {
+      let n = xi * 374761393 + yi * 668265263 + zi * 2147483647;
+      n = (n ^ (n >>> 13)) * 1274126177;
+      return (((n ^ (n >>> 16)) >>> 0) % 100000) / 100000;
+    };
+    const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+    const xf = x - xi, yf = y - yi, zf = z - zi;
+    const sx = xf * xf * (3 - 2 * xf), sy = yf * yf * (3 - 2 * yf), sz = zf * zf * (3 - 2 * zf);
+    const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+    return lerp(
+      lerp(lerp(h(xi, yi, zi), h(xi + 1, yi, zi), sx), lerp(h(xi, yi + 1, zi), h(xi + 1, yi + 1, zi), sx), sy),
+      lerp(lerp(h(xi, yi, zi + 1), h(xi + 1, yi, zi + 1), sx), lerp(h(xi, yi + 1, zi + 1), h(xi + 1, yi + 1, zi + 1), sx), sy),
+      sz,
+    );
   }
 
   /** Curve frame at arc-length s (local space). Extrapolates beyond both ends. */
@@ -444,444 +473,594 @@ export class CrystalAxis {
     outT.normalize();
     outN.normalize();
     outB.normalize();
-    // Linear extrapolation off either end of the table
     if (s < 0) outP.addScaledVector(outT, s);
     else if (s > this.curveLen) outP.addScaledVector(outT, s - this.curveLen);
   }
 
+  /** Matrix shell radius at arc-length s — thin neck at the head, swelling shell. */
+  private static stemRadius(s: number): number {
+    const grow = THREE.MathUtils.smoothstep(s, 2, 46);
+    const taper = 1 - 0.35 * THREE.MathUtils.smoothstep(s, 78, CONFIG.CLUSTER_FADE_S);
+    return (1.0 + 3.2 * grow) * taper;
+  }
+
+  // ================= Geometry builders ==============================================
+
   /**
-   * Build one shard's local geometry (an irregular elongated hexagonal bipyramid —
-   * an ice splinter) with tilt/roll baked in, into the ring slot's template arrays.
-   * Also writes the slot's static attributes (uv, seed, missed).
+   * One terminated crystal habit, unit length along +Y (root at y=0, tip at y≈1),
+   * flat-faceted (non-indexed). Three habits: 'stout' prism, thin 'blade', 'twin'
+   * (interpenetrating pair) — the reference collage's family vocabulary.
    */
-  private reseedShard(ring: number, birth: number, missed: boolean): void {
-    const sides = CONFIG.SHARD_SIDES;
-    const rng = CrystalAxis.mulberry32(birth * 2654435761 + 1013904223);
-    const seed = rng();
-    this.shardSeed[ring] = seed;
-    // Golden-angle placement around the spine: consecutive shards rotate by ~137.5°,
-    // so the young scatter resolves into a helical braid as it settles — ordered,
-    // never mechanical. Missed slots get a random kick OFF the braid line instead:
-    // a permanent structural flaw you can see in the lattice.
-    this.shardJitterTheta[ring] = missed
-      ? rng() * Math.PI * 2
-      : birth * 2.39996 + (rng() - 0.5) * 0.9;
-    this.shardJitterMag[ring] = (0.5 + 1.3 * rng()) * (missed ? 1.6 : 1.0);
+  private static buildCrystalGeometry(habit: 'stout' | 'blade' | 'twin', seedNum: number): THREE.BufferGeometry {
+    const rng = CrystalAxis.mulberry32(seedNum);
+    const positions: number[] = [];
 
-    // Slim ice needles: long and blade-like, embedded as glints in the tail light.
-    const len = 3.2 + 2.3 * rng();
-    const wid = (0.30 + 0.25 * rng()) * (missed ? 0.75 : 1.0);
-    const waistY = (rng() - 0.5) * 0.3 * len;
-    const topY = len * 0.5;
-    const botY = -len * 0.5;
-    const apexTopX = (rng() - 0.5) * 0.5 * wid;
-    const apexTopZ = (rng() - 0.5) * 0.5 * wid;
-
-    // Waist ring corners with natural jitter
-    const cx: number[] = [], cz: number[] = [], cy: number[] = [];
-    for (let k = 0; k < sides; k++) {
-      const ang = (k / sides) * Math.PI * 2 + (rng() - 0.5) * (Math.PI / sides) * 0.9;
-      const r = wid * (0.75 + 0.5 * rng());
-      cx.push(Math.cos(ang) * r);
-      cz.push(Math.sin(ang) * r);
-      cy.push(waistY + (rng() - 0.5) * 0.22 * len);
-    }
-
-    // Baked orientation: roll about the long axis + a small off-tangent tilt
-    // (kept gentle so the stream stays a braid through the curve's bend)
-    const roll = rng() * Math.PI * 2;
-    const tiltX = (rng() - 0.5) * 0.22;
-    const tiltZ = (rng() - 0.5) * 0.22;
-    const q = new THREE.Quaternion()
-      .setFromEuler(new THREE.Euler(tiltX, roll, tiltZ, 'YXZ'));
-    const rot = new THREE.Matrix4().makeRotationFromQuaternion(q);
-
-    const base = ring * CrystalAxis.VERTS_PER_SHARD;
-    const pos = this.shardLocalPos;
-    const nrm = this.shardLocalNrm;
-    const uvAttr = this.tailGeo.getAttribute('uv') as THREE.BufferAttribute;
-    const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
-    const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), n = new THREE.Vector3();
-    const centroid = new THREE.Vector3();
-    let vi = base;
-
-    const emitTri = (
-      ax: number, ay: number, az: number, ua: number, va: number,
-      bx: number, by: number, bz: number, ub: number, vb: number,
-      cxx: number, cyy: number, czz: number, uc: number, vc: number,
+    const pushPrism = (
+      cx: number, cz: number, baseY: number, tipY: number,
+      width: number, zFlat: number, sides: number, twist: number,
     ) => {
-      vA.set(ax, ay, az); vB.set(bx, by, bz); vC.set(cxx, cyy, czz);
-      // Outward winding for a convex solid around the origin
-      centroid.copy(vA).add(vB).add(vC).multiplyScalar(1 / 3);
-      e1.subVectors(vB, vA);
-      e2.subVectors(vC, vA);
-      n.crossVectors(e1, e2);
-      if (n.lengthSq() < 1e-10) n.set(0, 1, 0);
-      n.normalize();
-      if (n.dot(centroid) < 0) {
-        // flip winding (swap B and C)
-        const t = vB.clone(); vB.copy(vC); vC.copy(t);
-        n.negate();
-        const tu = ub, tv = vb;
-        // eslint-disable-next-line no-param-reassign
-        ub = uc; vb = vc; uc = tu; vc = tv;
+      // Waist rings: lower (near base) and upper (where the termination starts)
+      const lowY = baseY + (tipY - baseY) * 0.10;
+      const upY = baseY + (tipY - baseY) * (habit === 'blade' ? 0.70 : 0.58);
+      const lo: number[][] = [];
+      const up: number[][] = [];
+      for (let k = 0; k < sides; k++) {
+        const ang = (k / sides) * Math.PI * 2 + (rng() - 0.5) * (Math.PI / sides) * 0.8 + twist;
+        const rl = width * (0.78 + 0.42 * rng());
+        const ru = width * (0.84 + 0.42 * rng());
+        lo.push([cx + Math.cos(ang) * rl, lowY + (rng() - 0.5) * 0.05, cz + Math.sin(ang) * rl * zFlat]);
+        up.push([cx + Math.cos(ang + 0.06) * ru, upY + (rng() - 0.5) * 0.06, cz + Math.sin(ang + 0.06) * ru * zFlat]);
       }
-      for (const [v, uu, vv] of [[vA, ua, va], [vB, ub, vb], [vC, uc, vc]] as const) {
-        const p = (v as THREE.Vector3).clone().applyMatrix4(rot);
-        const nn = n.clone().transformDirection(rot);
-        pos[vi * 3] = p.x; pos[vi * 3 + 1] = p.y; pos[vi * 3 + 2] = p.z;
-        nrm[vi * 3] = nn.x; nrm[vi * 3 + 1] = nn.y; nrm[vi * 3 + 2] = nn.z;
-        uvAttr.setXY(vi, uu as number, vv as number);
-        vi++;
+      const tipX = cx + (rng() - 0.5) * width * 0.7;
+      const tipZ = cz + (rng() - 0.5) * width * 0.7 * zFlat;
+      const rootX = cx + (rng() - 0.5) * width * 0.4;
+      const rootZ = cz + (rng() - 0.5) * width * 0.4 * zFlat;
+      const tri = (A: number[], B: number[], C: number[]) => positions.push(...A, ...B, ...C);
+      for (let k = 0; k < sides; k++) {
+        const k2 = (k + 1) % sides;
+        // prism wall (two triangles)
+        tri(lo[k], lo[k2], up[k2]);
+        tri(lo[k], up[k2], up[k]);
+        // termination face to the tip
+        tri(up[k], up[k2], [tipX, tipY, tipZ]);
+        // root cap down to a buried apex
+        tri(lo[k2], lo[k], [rootX, baseY - 0.08, rootZ]);
       }
     };
 
+    if (habit === 'stout') {
+      pushPrism(0, 0, 0, 1.0, 0.30, 1.0, 6, 0);
+    } else if (habit === 'blade') {
+      pushPrism(0, 0, 0, 1.0, 0.30, 0.40, 5, 0);
+    } else {
+      pushPrism(0, 0, 0, 1.0, 0.26, 0.9, 6, 0);
+      pushPrism(0.16, -0.10, 0.04, 0.62, 0.17, 0.85, 5, 0.7); // the smaller twin
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+    geo.computeVertexNormals(); // non-indexed → true flat facets
+    geo.computeBoundingSphere();
+    return geo;
+  }
+
+  /** A tiny irregular bipyramid — one druzy glitter grain. */
+  private static buildDruzyGeometry(seedNum: number): THREE.BufferGeometry {
+    const rng = CrystalAxis.mulberry32(seedNum);
+    const positions: number[] = [];
+    const sides = 5;
+    const ring: number[][] = [];
+    for (let k = 0; k < sides; k++) {
+      const ang = (k / sides) * Math.PI * 2 + (rng() - 0.5) * 0.5;
+      const r = 0.30 * (0.7 + 0.6 * rng());
+      ring.push([Math.cos(ang) * r, 0.42 + (rng() - 0.5) * 0.12, Math.sin(ang) * r]);
+    }
+    const tip = [(rng() - 0.5) * 0.16, 1.0, (rng() - 0.5) * 0.16];
+    const root = [(rng() - 0.5) * 0.1, -0.05, (rng() - 0.5) * 0.1];
     for (let k = 0; k < sides; k++) {
       const k2 = (k + 1) % sides;
-      const u0 = k / sides, u1 = (k + 1) / sides;
-      // Upper face: waistK → waistK+1 → top apex
-      emitTri(
-        cx[k], cy[k], cz[k], u0, 0.45,
-        cx[k2], cy[k2], cz[k2], u1, 0.45,
-        apexTopX, topY, apexTopZ, (u0 + u1) * 0.5, 1.0,
-      );
-      // Lower face: waistK+1 → waistK → bottom apex
-      emitTri(
-        cx[k2], cy[k2], cz[k2], u1, 0.45,
-        cx[k], cy[k], cz[k], u0, 0.45,
-        -apexTopX * 0.6, botY, -apexTopZ * 0.6, (u0 + u1) * 0.5, 0.0,
-      );
-    }
-
-    // Static per-vertex attributes for this slot
-    for (let i = 0; i < CrystalAxis.VERTS_PER_SHARD; i++) {
-      this.seedAttr.setX(base + i, seed);
-      this.missedAttr.setX(base + i, missed ? 1 : 0);
-    }
-    this.seedAttr.needsUpdate = true;
-    this.missedAttr.needsUpdate = true;
-    uvAttr.needsUpdate = true;
-  }
-
-  /**
-   * The nucleus: ONE elongated, many-faceted gem — a convex hull over a seeded,
-   * anisotropic point cloud, so the facets are large, irregular and *cut*-looking
-   * (no icosahedron tells, no spike primitives). Elongated along the tail-start
-   * tangent: the silhouette continues the stream's motion axis, prow forward.
-   */
-  private buildNucleusGeometry(): THREE.BufferGeometry {
-    const rng = CrystalAxis.mulberry32(0xbeef01);
-    const R = CONFIG.NUCLEUS_GEM_RADIUS;
-
-    // Seeded point cloud on an elongated ellipsoid → large irregular hull facets.
-    const pts: THREE.Vector3[] = [];
-    for (let i = 0; i < 26; i++) {
-      const v = new THREE.Vector3();
-      do {
-        v.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1);
-      } while (v.lengthSq() < 0.04);
-      v.normalize().multiplyScalar(R * (0.80 + 0.42 * rng()));
-      v.x *= 1.0;
-      v.y *= 1.52; // long axis
-      v.z *= 0.84;
-      pts.push(v);
-    }
-    // Two deliberate apex points so the long axis terminates in real culet/crown
-    // tips instead of a chopped-off hull.
-    pts.push(new THREE.Vector3(0.6, R * 1.78, -0.4));
-    pts.push(new THREE.Vector3(-0.8, -R * 1.62, 0.5));
-
-    const hull = new ConvexGeometry(pts); // non-indexed, flat facet normals
-
-    // Orient the long axis along the comet's motion axis (prow away from the tail).
-    const tailDir = new THREE.Vector3(6, -40, -4).normalize();
-    const q = new THREE.Quaternion().setFromUnitVectors(
-      new THREE.Vector3(0, 1, 0),
-      tailDir.clone().negate(),
-    );
-    hull.applyQuaternion(q);
-    return hull;
-  }
-
-  /**
-   * One tail ribbon: a strip of rings along the curve whose centerline is offset
-   * by (cos φ·N + sin φ·B)·r(s) — r grows with s so the streamers fan apart. The
-   * vertex shader billboards each ring toward the camera (cosmetic only; ribbons
-   * are never raycast).
-   */
-  private buildRibbonGeometry(phi: number, r0: number): THREE.BufferGeometry {
-    const RINGS = 96;
-    const s0 = 2;
-    const s1 = CONFIG.COMET_FADE_S + 8;
-    const p = new THREE.Vector3(), t = new THREE.Vector3();
-    const n = new THREE.Vector3(), b = new THREE.Vector3();
-    const positions = new Float32Array(RINGS * 2 * 3);
-    const tangents = new Float32Array(RINGS * 2 * 3);
-    const sArr = new Float32Array(RINGS * 2);
-    const sideArr = new Float32Array(RINGS * 2);
-    const indices: number[] = [];
-    for (let r = 0; r < RINGS; r++) {
-      const f = r / (RINGS - 1);
-      const s = s0 + (s1 - s0) * f;
-      this.frameAt(s, p, t, n, b);
-      const rOff = r0 * (0.3 + 1.7 * f); // streamers diverge down the tail
-      const ox = (n.x * Math.cos(phi) + b.x * Math.sin(phi)) * rOff;
-      const oy = (n.y * Math.cos(phi) + b.y * Math.sin(phi)) * rOff;
-      const oz = (n.z * Math.cos(phi) + b.z * Math.sin(phi)) * rOff;
-      for (let k = 0; k < 2; k++) {
-        const idx = r * 2 + k;
-        positions[idx * 3] = p.x + ox;
-        positions[idx * 3 + 1] = p.y + oy;
-        positions[idx * 3 + 2] = p.z + oz;
-        tangents[idx * 3] = t.x;
-        tangents[idx * 3 + 1] = t.y;
-        tangents[idx * 3 + 2] = t.z;
-        sArr[idx] = s;
-        sideArr[idx] = k === 0 ? -1 : 1;
-      }
-      if (r < RINGS - 1) {
-        const a0 = r * 2;
-        indices.push(a0, a0 + 1, a0 + 2, a0 + 2, a0 + 1, a0 + 3);
-      }
+      positions.push(...ring[k], ...ring[k2], ...tip);
+      positions.push(...ring[k2], ...ring[k], ...root);
     }
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute('aTan', new THREE.BufferAttribute(tangents, 3));
-    geo.setAttribute('aS', new THREE.BufferAttribute(sArr, 1));
-    geo.setAttribute('aSide', new THREE.BufferAttribute(sideArr, 1));
-    geo.setIndex(indices);
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
     return geo;
   }
 
   /**
-   * One call per REAL slot (the data heartbeat): the stream glides one spacing and
-   * a new shard condenses behind the nucleus. `slot` and `leaderIndex` are optional
-   * additive metadata for the hover feature (orchestrator hook requested).
+   * The botryoidal matrix stem along the spine: lumpy, rounded (smooth normals),
+   * crevice-darkened, with aS / aCrev baked for the shader's zoning + ember band.
    */
-  addSegment(missed: boolean, slot?: number, leaderIndex?: number): void {
-    const ring = this.headProgress % this.maxSegments;
-    this.reseedShard(ring, this.headProgress, missed);
-    this.segmentSlots[ring] = slot ?? -1;
-    this.segmentMissed[ring] = missed ? 1 : 0;
-    this.segmentLeaders[ring] = leaderIndex ?? -1;
-    this.segmentBirth[ring] = this.headProgress;
-    this.segmentBirthTime[ring] = this.timeAcc;
-    this.flashes[ring] = 0;
-    this.headProgress++;
+  private buildStemGeometry(seedNum: number): THREE.BufferGeometry {
+    void seedNum;
+    const SEGS = 14;
+    const s0 = 0.6;
+    const s1 = CONFIG.CLUSTER_FADE_S + 6;
+    const RINGS = 96;
+    const p = new THREE.Vector3(), t = new THREE.Vector3();
+    const n = new THREE.Vector3(), b = new THREE.Vector3();
 
-    const visible = Math.min(this.headProgress, this.maxSegments);
-    this.tailGeo.setDrawRange(0, visible * CrystalAxis.VERTS_PER_SHARD);
+    const positions = new Float32Array(RINGS * SEGS * 3);
+    const aS = new Float32Array(RINGS * SEGS);
+    const aCrev = new Float32Array(RINGS * SEGS);
+    const indices: number[] = [];
+
+    for (let i = 0; i < RINGS; i++) {
+      const f = i / (RINGS - 1);
+      const s = s0 + (s1 - s0) * f;
+      this.frameAt(s, p, t, n, b);
+      // pinch both ends so the tube reads as a grown mass, not a pipe
+      const endPinch =
+        THREE.MathUtils.smoothstep(f, 0, 0.035) * (1 - 0.85 * THREE.MathUtils.smoothstep(f, 0.96, 1));
+      const r0 = CrystalAxis.stemRadius(s) * Math.max(endPinch, 0.06);
+      for (let k = 0; k < SEGS; k++) {
+        const ang = (k / SEGS) * Math.PI * 2;
+        const ca = Math.cos(ang), sa = Math.sin(ang);
+        // Botryoidal lumps: seamless noise on the (cos, sin, s) domain
+        const n1 = CrystalAxis.vnoise3(ca * 1.6 + 7.3, sa * 1.6 + 2.1, s * 0.33);
+        const n2 = CrystalAxis.vnoise3(ca * 3.4 + 1.7, sa * 3.4 + 9.2, s * 0.85);
+        const bump = (n1 - 0.5) * 0.52 + (n2 - 0.5) * 0.22;
+        const r = r0 * (1 + bump);
+        const idx = i * SEGS + k;
+        positions[idx * 3] = p.x + (n.x * ca + b.x * sa) * r;
+        positions[idx * 3 + 1] = p.y + (n.y * ca + b.y * sa) * r;
+        positions[idx * 3 + 2] = p.z + (n.z * ca + b.z * sa) * r;
+        aS[idx] = s;
+        aCrev[idx] = THREE.MathUtils.clamp(1 - THREE.MathUtils.smoothstep(bump, -0.12, 0.22), 0, 1);
+        if (i < RINGS - 1) {
+          const a0 = idx;
+          const a1 = i * SEGS + ((k + 1) % SEGS);
+          const b0 = (i + 1) * SEGS + k;
+          const b1 = (i + 1) * SEGS + ((k + 1) % SEGS);
+          indices.push(a0, b0, a1, a1, b0, b1);
+        }
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('aS', new THREE.BufferAttribute(aS, 1));
+    geo.setAttribute('aCrev', new THREE.BufferAttribute(aCrev, 1));
+    geo.setIndex(indices);
+    geo.computeVertexNormals(); // smooth — botryoidal masses are rounded
+    geo.computeBoundingSphere();
+    return geo;
+  }
+
+  // ================= Environment + grab pass ========================================
+
+  /**
+   * Palette-matched environment for the physical materials: deep indigo space, a
+   * violet horizon haze, one warm amber field (the validator-cloud latitude) and
+   * three bright softbox cards for crisp facet speculars. PMREM'd once, assigned
+   * to the cluster materials only (scene.environment stays untouched — Wiring's).
+   */
+  private buildEnvironment(renderer: THREE.WebGLRenderer): void {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envScene = new THREE.Scene();
+
+    const domeMat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      vertexShader: /* glsl */ `
+        varying vec3 vDir;
+        void main() {
+          vDir = position;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        varying vec3 vDir;
+        void main() {
+          vec3 d = normalize(vDir);
+          float el = d.y;
+          float az = atan(d.z, d.x);
+          // deep indigo nadir → near-black zenith
+          vec3 col = mix(vec3(0.030, 0.020, 0.070), vec3(0.006, 0.008, 0.030), smoothstep(-1.0, 1.0, el));
+          // violet horizon haze
+          col += vec3(0.10, 0.05, 0.22) * exp(-pow(el + 0.04, 2.0) / 0.050);
+          // the warm amber field (validator-cloud latitude), strongest on one side
+          col += vec3(0.55, 0.33, 0.12) * exp(-pow(el + 0.17, 2.0) / 0.028) * (0.55 + 0.45 * cos(az - 0.7));
+          // a faint green glint region opposite it (the brand's second pole)
+          col += vec3(0.04, 0.30, 0.18) * exp(-pow(el - 0.32, 2.0) / 0.030) * (0.5 + 0.5 * cos(az + 2.4));
+          gl_FragColor = vec4(col, 1.0);
+        }
+      `,
+    });
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(40, 48, 24), domeMat);
+    envScene.add(dome);
+
+    // Softbox cards — compact bright sources so glassy facets get real glints.
+    const card = (color: THREE.ColorRepresentation, intensity: number, pos: THREE.Vector3, size: number) => {
+      const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(size, size * 0.62),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(intensity), side: THREE.DoubleSide }),
+      );
+      m.position.copy(pos);
+      m.lookAt(0, 0, 0);
+      envScene.add(m);
+    };
+    card(0xffd9a0, 6.5, new THREE.Vector3(18, -7, 10), 7);   // warm amber key
+    card(0xb9a4ff, 5.0, new THREE.Vector3(-16, 12, -8), 6);  // violet rim
+    card(0xbfffe2, 4.0, new THREE.Vector3(4, 16, 14), 4);    // cool green-white kicker
+
+    this.envRT = pmrem.fromScene(envScene, 0.04);
+    pmrem.dispose();
+    dome.geometry.dispose();
+    domeMat.dispose();
+    envScene.traverse((o) => {
+      if (o instanceof THREE.Mesh && o !== dome) {
+        o.geometry.dispose();
+        (o.material as THREE.Material).dispose();
+      }
+    });
+
+    for (const m of [this.gemMat, this.druzyMat, this.stemMat]) {
+      m.envMap = this.envRT.texture;
+      m.needsUpdate = true;
+    }
   }
 
   /**
-   * The accretion strike: the leader's packet lands (orchestrator calls this on
-   * arrival). The nucleus blooms, the newest produced shard ignites, and a pulse
-   * cascades down the tail. Missed slots never strike (honesty).
+   * Full-scene grab for the gem refraction (Reflector pattern — sanctioned nested
+   * render). Runs once per composer frame, from the first gem mesh's onBeforeRender.
+   * The gems and the coma hide during the grab (refracting your own halo reads as
+   * milk); everything else — stars, validator cloud, beams, matrix — bends through.
+   */
+  private runGrabPass(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): void {
+    if (this.grabbing) return;
+    if (scene.overrideMaterial) return; // depth/DoF prepass — not a beauty frame
+    if (!this.envRT) this.buildEnvironment(renderer);
+    this.grabbing = true;
+
+    renderer.getDrawingBufferSize(this.grabSize);
+    const gw = Math.max(2, Math.floor(this.grabSize.x / 2));
+    const gh = Math.max(2, Math.floor(this.grabSize.y / 2));
+    if (!this.grabRT || this.grabRT.width !== gw || this.grabRT.height !== gh) {
+      this.grabRT?.dispose();
+      this.grabRT = new THREE.WebGLRenderTarget(gw, gh, {
+        generateMipmaps: true,
+        minFilter: THREE.LinearMipmapLinearFilter,
+        magFilter: THREE.LinearFilter,
+        type: THREE.HalfFloatType,
+        depthBuffer: true,
+      });
+    }
+
+    const prevRT = renderer.getRenderTarget();
+    const prevXr = renderer.xr.enabled;
+    const prevShadow = renderer.shadowMap.autoUpdate;
+    const prevAutoClear = renderer.autoClear;
+    const prevTone = renderer.toneMapping;
+    renderer.xr.enabled = false;
+    renderer.shadowMap.autoUpdate = false;
+    renderer.autoClear = true;
+    renderer.toneMapping = THREE.NoToneMapping; // grade once, in the main pass
+
+    for (const g of this.gemMeshes) g.visible = false;
+    const comaWasVisible = this.coma.visible;
+    this.coma.visible = false;
+
+    renderer.setRenderTarget(this.grabRT);
+    renderer.render(scene, camera);
+
+    for (const g of this.gemMeshes) g.visible = true;
+    this.coma.visible = comaWasVisible;
+
+    renderer.xr.enabled = prevXr;
+    renderer.shadowMap.autoUpdate = prevShadow;
+    renderer.autoClear = prevAutoClear;
+    renderer.toneMapping = prevTone;
+    renderer.setRenderTarget(prevRT);
+
+    this.u.uGrabTex.value = this.grabRT.texture;
+    (this.u.uGrabSize.value as THREE.Vector2).set(gw, gh);
+    this.grabbing = false;
+  }
+
+  // ================= Data events ====================================================
+
+  /**
+   * One call per REAL slot (the data heartbeat): the reef glides one spacing and a
+   * new crystal nucleates at the head — one of its leader's four-blade spray, in
+   * the leader's hue family. `slot` and `leaderIndex` are optional additive
+   * metadata (orchestrator hook requested); without them the leader grouping is
+   * inferred from the 4-slot cadence.
+   */
+  addSegment(missed: boolean, slot?: number, leaderIndex?: number): void {
+    const K = this.druzyPerSlot;
+    const birth = this.headProgress;
+    const ring = birth % this.maxSegments;
+    const rng = CrystalAxis.mulberry32(birth * 2654435761 + 1013904223);
+
+    // Leader-stable family values (azimuth, hue, habit) — the spray identity.
+    const slotForPhase = slot ?? birth;
+    const leaderOrdinal = Math.floor(slotForPhase / CONFIG.LEADER_SLOTS);
+    const slotInLeader = ((slotForPhase % CONFIG.LEADER_SLOTS) + CONFIG.LEADER_SLOTS) % CONFIG.LEADER_SLOTS;
+    const lrng = CrystalAxis.mulberry32(leaderOrdinal * 747796405 + 2891336453);
+    const azimuth = leaderOrdinal * 2.39996 + (lrng() - 0.5) * 0.5;
+    const famPick = lrng();
+    let hue: number; // family anchor on the Solana axis: 0 green · 0.5 magenta · 1 purple
+    if (famPick < 0.45) hue = 0.80 + 0.18 * lrng();
+    else if (famPick < 0.75) hue = 0.44 + 0.14 * lrng();
+    else hue = 0.04 + 0.16 * lrng();
+    const variant = Math.floor(lrng() * 3) % 3;
+
+    // Per-crystal habit within the spray; the leader's first slot is its dominant blade.
+    const dominant = slotInLeader === 0;
+    this.segmentVariant[ring] = variant;
+    this.gemTheta[ring] = azimuth + (slotInLeader - 1.5) * 0.42 + (rng() - 0.5) * 0.22;
+    this.gemTilt[ring] = 0.30 + 0.32 * rng();
+    this.gemRoll[ring] = rng() * Math.PI * 2;
+    this.gemLen[ring] = (5.5 + 4.0 * rng()) * (dominant ? 1.5 : 1.0);
+    this.gemWidX[ring] = (1.45 + 0.95 * rng()) * (dominant ? 1.25 : 1.0);
+    this.gemWidZ[ring] = (1.45 + 0.95 * rng()) * (dominant ? 1.25 : 1.0);
+
+    // Metadata (ring-buffered; hover feature)
+    this.segmentSlots[ring] = slot ?? -1;
+    this.segmentMissed[ring] = missed ? 1 : 0;
+    this.segmentLeaders[ring] = leaderIndex ?? -1;
+    this.segmentBirth[ring] = birth;
+    this.segmentBirthTime[ring] = this.timeAcc;
+
+    // Per-instance attributes on the chosen habit (others stay zero-scaled).
+    const crystalHue = THREE.MathUtils.clamp(hue + (rng() - 0.5) * 0.10, 0, 1);
+    this.gemBirthAttr[variant].setX(ring, birth);
+    this.gemHueAttr[variant].setX(ring, crystalHue);
+    this.gemSeedAttr[variant].setX(ring, rng());
+    this.gemMissedAttr[variant].setX(ring, missed ? 1 : 0);
+    this.gemBirthAttr[variant].needsUpdate = true;
+    this.gemHueAttr[variant].needsUpdate = true;
+    this.gemSeedAttr[variant].needsUpdate = true;
+    this.gemMissedAttr[variant].needsUpdate = true;
+
+    // Druzy deposit: a scatter of micro-crystals around the slot's azimuth sector.
+    // A missed slot leaves a sparse pocket of dark cinders — the vacancy.
+    for (let k = 0; k < K; k++) {
+      const i = ring * K + k;
+      this.dTheta[i] = azimuth + (rng() - 0.5) * 2.3;
+      this.dSOff[i] = (rng() - 0.5) * 1.35 * CONFIG.CLUSTER_SPACING;
+      this.dTilt[i] = 0.15 + 0.5 * rng();
+      let sc = 1.0 + 1.5 * rng();
+      if (missed) sc *= k % 2 === 0 ? 0.6 : 0; // sparse, stunted
+      this.dScale[i] = sc;
+      this.dBirthAttr.setX(i, birth);
+      this.dHueAttr.setX(i, THREE.MathUtils.clamp(hue + (rng() - 0.5) * 0.16, 0, 1));
+      this.dSeedAttr.setX(i, rng());
+      this.dMissedAttr.setX(i, missed ? 1 : 0);
+    }
+    this.dBirthAttr.needsUpdate = true;
+    this.dHueAttr.needsUpdate = true;
+    this.dSeedAttr.needsUpdate = true;
+    this.dMissedAttr.needsUpdate = true;
+
+    if (!missed) this.lastProducedBirth = birth;
+    this.headProgress++;
+  }
+
+  /**
+   * The nucleation strike: the leader's packet lands (orchestrator calls this on
+   * arrival). The head light blooms, the newest produced crystal flashes into
+   * being, and a pulse of light races down the reef. Missed slots never strike.
    */
   strike(): void {
     this.tipPulse = 1.0;
     this.strikeT = 0;
-    // Ignite the newest PRODUCED segment — catch-up bursts can land an in-flight
-    // packet right after a missed slot was added; never let a cinder flash.
-    for (let back = 0; back < 6; back++) {
-      const b = this.headProgress - 1 - back;
-      if (b < 0) break;
-      const ring = b % this.maxSegments;
-      if (this.segmentBirth[ring] !== b) break; // ring slot already recycled
-      if (!this.segmentMissed[ring]) {
-        this.flashes[ring] = 1.0;
-        break;
-      }
-    }
+    this.u.uFlashE.value = 1.0;
+    this.u.uStruckBirth.value = this.lastProducedBirth;
   }
+
+  // ================= Per-frame =====================================================
+
+  private static _p = new THREE.Vector3();
+  private static _t = new THREE.Vector3();
+  private static _n = new THREE.Vector3();
+  private static _b = new THREE.Vector3();
+  private static _dir = new THREE.Vector3();
+  private static _pos = new THREE.Vector3();
+  private static _scl = new THREE.Vector3();
+  private static _q = new THREE.Quaternion();
+  private static _qRoll = new THREE.Quaternion();
+  private static _m = new THREE.Matrix4();
+  private static _up = new THREE.Vector3(0, 1, 0);
 
   update(dt: number): void {
     this.timeAcc += dt;
     this.strikeT += dt;
 
     // The heartbeat: eased glide toward the head — one spacing per slot, felt.
-    this.scrollPos += (this.headProgress - this.scrollPos) * Math.min(1, CONFIG.COMET_GLIDE_RATE * dt);
+    this.scrollPos += (this.headProgress - this.scrollPos) * Math.min(1, CONFIG.CLUSTER_GLIDE_RATE * dt);
+    // Backlog jump-cut: if the tab was hidden, slots kept arriving while the glide
+    // stood still — snap to within a few slots so the reef never rushes past or
+    // strands newborn crystals off the head (then glide the last stretch normally).
+    if (this.headProgress - this.scrollPos > 8) this.scrollPos = this.headProgress - 8;
 
-    // Suspended-mobile sway: the whole comet slowly turns and breathes its pitch,
-    // so the tail's silhouette cycles even for a static camera. The nucleus sits at
-    // the local origin, so the fixed growth point never moves.
+    // Suspended-mobile sway: the whole cluster slowly turns, so the reef's
+    // silhouette cycles even for a static camera. Head stays at the local origin.
     const t = this.timeAcc;
-    this.mesh.rotation.y = t * CONFIG.COMET_SWAY_YAW;
-    this.mesh.rotation.x = Math.sin(t * 0.10) * 0.028;
-    this.mesh.rotation.z = Math.cos(t * 0.083) * 0.022;
-    // Nucleus tumble about the tail axis — facet glints crawl at idle.
-    this.nucleus.rotateOnAxis(this.tumbleAxis, dt * CONFIG.COMET_TUMBLE_SPEED);
+    this.mesh.rotation.y = t * CONFIG.CLUSTER_SWAY_YAW;
+    this.mesh.rotation.x = Math.sin(t * 0.10) * 0.026;
+    this.mesh.rotation.z = Math.cos(t * 0.083) * 0.020;
 
-    // Accretion pulse decay
+    // Pulse decays
     this.tipPulse = this.tipPulse > 0.001 ? this.tipPulse * Math.exp(-dt * 3.2) : 0;
+    const fe = this.u.uFlashE.value as number;
+    this.u.uFlashE.value = fe > 0.001 ? fe * Math.exp(-dt * 3.4) : 0;
 
-    // Idle dual-frequency breathing (brightness drive shared by all comet materials)
+    // Idle dual-frequency breathing shared by all cluster materials
     const breath = 0.6 * Math.sin(t * 0.7) + 0.4 * Math.sin(t * 1.13 + 1.7);
     const breath01 = breath * 0.5 + 0.5;
 
-    // Shared uniforms
-    this.tailMat.uniforms.uTime.value = t;
-    this.tailMat.uniforms.uBreath.value = breath01;
-    this.tailMat.uniforms.uTipPulse.value = this.tipPulse;
-    this.nucleusMat.uniforms.uTime.value = t;
-    this.nucleusMat.uniforms.uBreath.value = breath01;
-    this.nucleusMat.uniforms.uTipPulse.value = this.tipPulse;
-    const historyS =
-      CONFIG.COMET_TAIL_START + Math.min(this.scrollPos, this.maxSegments) * CONFIG.COMET_TAIL_SPACING;
-    for (const rm of this.ribbonMats) {
-      rm.uniforms.uTime.value = t;
-      rm.uniforms.uBreath.value = breath01;
-      rm.uniforms.uTipPulse.value = this.tipPulse;
-      rm.uniforms.uStrikeT.value = this.strikeT;
-      rm.uniforms.uHistoryS.value = historyS;
-    }
-    this.comaMat.uniforms.uTime.value = t;
+    this.u.uTime.value = t;
+    this.u.uBreath.value = breath01;
+    this.u.uScroll.value = this.scrollPos;
+    this.u.uStrikeT.value = this.strikeT;
 
-    // Light + coma + cloud drive — same external semantics as the column era.
+    // Lights: physical falloff (decay 2) — candela-scale intensities.
     this.tipLight.intensity =
-      CONFIG.TIP_LIGHT_BASE * (0.85 + 0.15 * breath01) + this.tipPulse * CONFIG.TIP_LIGHT_PULSE;
-    this.comaMat.uniforms.uIntensity.value = 0.12 + 0.05 * breath01 + this.tipPulse * 0.85;
+      CONFIG.CLUSTER_LIGHT_INTENSITY * (0.8 + 0.2 * breath01) +
+      this.tipPulse * CONFIG.CLUSTER_LIGHT_INTENSITY * 2.2;
+    const emberFlicker = 0.85 + 0.10 * breath01 + 0.05 * Math.sin(t * 2.3);
+    this.emberLight.intensity = CONFIG.CLUSTER_EMBER_INTENSITY * emberFlicker;
+
+    // Coma + cloud drive — same external semantics as the column/comet eras.
+    this.comaMat.uniforms.uTime.value = t;
+    this.comaMat.uniforms.uIntensity.value = 0.08 + 0.04 * breath01 + this.tipPulse * 0.80;
     this.tipGlowIntensity = CONFIG.TIP_LIGHT_BASE * (0.6 + 0.2 * breath01) + this.tipPulse;
 
-    this.updateShards(dt);
+    this.updateInstances();
   }
 
   /**
-   * CPU shard pass: position every live shard along the curve (glide, braid offset,
-   * convergence with age, condensation scale-in, young tremble) and refresh the
-   * dynamic attributes (age, arc-length, ignition/cascade glow). CPU-side so the
-   * rendered triangles are exactly what a raycaster sees (hover feature).
+   * CPU instance pass: place every live crystal + druzy grain along the spine
+   * (glide, leader-spray azimuth, head-ward lean, nucleation scale-in). CPU-side
+   * so rendered transforms are exactly what the raycaster sees (hover feature).
    */
-  private static _p = new THREE.Vector3();
-  private static _t = new THREE.Vector3();
-  private static _n = new THREE.Vector3();
-  private static _b = new THREE.Vector3();
-  private updateShards(dt: number): void {
-    const VPS = CrystalAxis.VERTS_PER_SHARD;
-    const visible = Math.min(this.headProgress, this.maxSegments);
-    if (visible === 0) return;
-
-    const pos = this.posAttr.array as Float32Array;
-    const nrm = this.nrmAttr.array as Float32Array;
-    const glow = this.glowAttr.array as Float32Array;
-    const age = this.ageAttr.array as Float32Array;
-    const sArr = this.sAttr.array as Float32Array;
-    const lp = this.shardLocalPos;
-    const ln = this.shardLocalNrm;
+  private updateInstances(): void {
+    const K = this.druzyPerSlot;
     const P = CrystalAxis._p, T = CrystalAxis._t, N = CrystalAxis._n, B = CrystalAxis._b;
-
-    const spacing = CONFIG.COMET_TAIL_SPACING;
-    const tailStart = CONFIG.COMET_TAIL_START;
-    const flashDecay = Math.exp(-dt * 3.0);
-    const waveS = this.strikeT * CONFIG.COMET_WAVE_SPEED;
-    const waveAmp = Math.exp(-this.strikeT * 2.1);
-    const tNow = this.timeAcc;
+    const dir = CrystalAxis._dir, pos = CrystalAxis._pos, scl = CrystalAxis._scl;
+    const q = CrystalAxis._q, qR = CrystalAxis._qRoll, m = CrystalAxis._m;
+    const up = CrystalAxis._up;
+    const spacing = CONFIG.CLUSTER_SPACING;
+    const startS = CONFIG.CLUSTER_START_S;
+    const cutS = CONFIG.CLUSTER_FADE_S + 6;
+    const visible = Math.min(this.headProgress, this.maxSegments);
 
     for (let ring = 0; ring < visible; ring++) {
       const birth = this.segmentBirth[ring];
       if (birth < 0) continue;
-      const sBase = tailStart + (this.scrollPos - 1 - birth) * spacing;
-      const slotsBehind = this.headProgress - 1 - birth;
-      const age01 = Math.min(Math.max(slotsBehind / CONFIG.FINALITY_DEPTH, 0), 1);
+      // Newborns wait in the head pocket until the glide reaches them (never
+      // extrapolate off the spine's start during catch-up bursts).
+      const sBase = Math.max(
+        startS - 1.1,
+        startS + (this.scrollPos - 1 - birth) * spacing,
+      );
+      const v = this.segmentVariant[ring];
+      const missed = this.segmentMissed[ring] === 1;
+
+      if (sBase > cutS) {
+        // Fully dissolved into space — free the instances.
+        for (let g = 0; g < 3; g++) this.gemMeshes[g].setMatrixAt(ring, CrystalAxis._zeroM);
+        for (let k = 0; k < K; k++) this.druzyMesh.setMatrixAt(ring * K + k, CrystalAxis._zeroM);
+        continue;
+      }
 
       this.frameAt(sBase, P, T, N, B);
+      const stemR = CrystalAxis.stemRadius(sBase);
 
-      // Braid offset: scattered while young, converging into the braid with
-      // finality. Kept inside the ribbon volume — the needles live IN the light.
-      // Missed cinders keep an enlarged offset — permanent flaws.
-      const settle = age01 * age01 * (3 - 2 * age01); // smoothstep
-      const mag = this.shardJitterMag[ring] * (1.25 - 0.95 * settle);
-      const th = this.shardJitterTheta[ring];
-      let ox = (N.x * Math.cos(th) + B.x * Math.sin(th)) * mag;
-      let oy = (N.y * Math.cos(th) + B.y * Math.sin(th)) * mag;
-      let oz = (N.z * Math.cos(th) + B.z * Math.sin(th)) * mag;
-
-      // Young shards tremble faintly — still condensing, not yet settled.
-      const tremble = Math.max(0, 1 - age01 * 3.3);
-      if (tremble > 0.01) {
-        const seed = this.shardSeed[ring] * 37.0;
-        ox += Math.sin(tNow * 2.1 + seed) * 0.10 * tremble;
-        oy += Math.sin(tNow * 2.7 + seed * 1.7) * 0.08 * tremble;
-        oz += Math.cos(tNow * 2.4 + seed * 2.3) * 0.10 * tremble;
+      // Nucleation scale-in with a gentle overshoot — condensation, not a pop.
+      const lived = this.timeAcc - this.segmentBirthTime[ring];
+      let grow = 1;
+      if (lived < 0.6) {
+        const x = Math.max(lived, 0) / 0.6;
+        grow = x * x * (3 - 2 * x) * (1 + 0.16 * Math.sin(Math.PI * x));
       }
 
-      // Condensation scale-in over the first half second of the shard's life
-      const lived = tNow - this.segmentBirthTime[ring];
-      let scale = lived >= 0.5 ? 1 : (() => { const x = Math.max(lived, 0) / 0.5; return x * x * (3 - 2 * x); })();
-      if (this.segmentMissed[ring]) scale *= 0.78;
-
-      // Per-segment glow: ignition flash (decaying) + the cascade wave passing
-      this.flashes[ring] = this.flashes[ring] > 0.001 ? this.flashes[ring] * flashDecay : 0;
-      let g = this.flashes[ring];
-      if (waveAmp > 0.01) {
-        const d = sBase - waveS;
-        g += waveAmp * Math.exp(-(d * d) / 42.0) * (this.segmentMissed[ring] ? 0 : 1);
+      // --- The slot's crystal (none for a missed slot — the vacancy) ---
+      for (let g = 0; g < 3; g++) {
+        if (g !== v || missed) {
+          this.gemMeshes[g].setMatrixAt(ring, CrystalAxis._zeroM);
+          continue;
+        }
+        const th = this.gemTheta[ring];
+        const ct = Math.cos(th), st = Math.sin(th);
+        dir.set(
+          N.x * ct + B.x * st - T.x * this.gemTilt[ring],
+          N.y * ct + B.y * st - T.y * this.gemTilt[ring],
+          N.z * ct + B.z * st - T.z * this.gemTilt[ring],
+        );
+        const dl = dir.length();
+        if (dl > 1e-5) dir.multiplyScalar(1 / dl); else dir.set(0, 1, 0);
+        pos.set(
+          P.x + dir.x * stemR * 0.45,
+          P.y + dir.y * stemR * 0.45,
+          P.z + dir.z * stemR * 0.45,
+        );
+        q.setFromUnitVectors(up, dir);
+        qR.setFromAxisAngle(up, this.gemRoll[ring]);
+        q.multiply(qR);
+        scl.set(this.gemWidX[ring] * grow, this.gemLen[ring] * grow, this.gemWidZ[ring] * grow);
+        m.compose(pos, q, scl);
+        this.gemMeshes[g].setMatrixAt(ring, m);
       }
-      if (g > 1.4) g = 1.4;
 
-      // Rotation basis: local X→N, Y→T (long axis along the stream), Z→B
-      const base = ring * VPS;
-      for (let i = 0; i < VPS; i++) {
-        const li = (base + i) * 3;
-        const lx = lp[li] * scale, ly = lp[li + 1] * scale, lz = lp[li + 2] * scale;
-        pos[li] = P.x + ox + N.x * lx + T.x * ly + B.x * lz;
-        pos[li + 1] = P.y + oy + N.y * lx + T.y * ly + B.y * lz;
-        pos[li + 2] = P.z + oz + N.z * lx + T.z * ly + B.z * lz;
-        const nx = ln[li], ny = ln[li + 1], nz = ln[li + 2];
-        nrm[li] = N.x * nx + T.x * ny + B.x * nz;
-        nrm[li + 1] = N.y * nx + T.y * ny + B.y * nz;
-        nrm[li + 2] = N.z * nx + T.z * ny + B.z * nz;
-        glow[base + i] = g;
-        age[base + i] = age01;
-        sArr[base + i] = sBase;
+      // --- The slot's druzy deposit ---
+      for (let k = 0; k < K; k++) {
+        const i = ring * K + k;
+        const sc = this.dScale[i];
+        if (sc <= 0) {
+          this.druzyMesh.setMatrixAt(i, CrystalAxis._zeroM);
+          continue;
+        }
+        const th = this.dTheta[i];
+        const ct = Math.cos(th), st = Math.sin(th);
+        dir.set(
+          N.x * ct + B.x * st - T.x * this.dTilt[i],
+          N.y * ct + B.y * st - T.y * this.dTilt[i],
+          N.z * ct + B.z * st - T.z * this.dTilt[i],
+        );
+        const dl = dir.length();
+        if (dl > 1e-5) dir.multiplyScalar(1 / dl); else dir.set(0, 1, 0);
+        const so = this.dSOff[i];
+        pos.set(
+          P.x + T.x * so + dir.x * stemR * 0.42,
+          P.y + T.y * so + dir.y * stemR * 0.42,
+          P.z + T.z * so + dir.z * stemR * 0.42,
+        );
+        q.setFromUnitVectors(up, dir);
+        const s = sc * grow;
+        scl.set(s, s, s);
+        m.compose(pos, q, scl);
+        this.druzyMesh.setMatrixAt(i, m);
       }
     }
 
-    this.posAttr.needsUpdate = true;
-    this.nrmAttr.needsUpdate = true;
-    this.glowAttr.needsUpdate = true;
-    this.ageAttr.needsUpdate = true;
-    this.sAttr.needsUpdate = true;
+    for (const g of this.gemMeshes) g.instanceMatrix.needsUpdate = true;
+    this.druzyMesh.instanceMatrix.needsUpdate = true;
   }
 
-  /** The nucleus's fixed world Y — the growth point (and the camera/beam anchor). */
+  /** The head's fixed world Y — the growth point (and the camera/beam anchor). */
   getGrowthPointY(): number {
-    return CONFIG.COMET_NUCLEUS_Y;
+    return CONFIG.CLUSTER_HEAD_Y;
   }
 
   /**
-   * Hover support: resolve a raycast hit on `mesh` (intersection.faceIndex) to its
-   * segment metadata. Returns null for never-written or recycled ring slots.
+   * Hover support: resolve a raycast hit on any 'cluster-gems-*' mesh to its
+   * segment metadata — `intersection.instanceId` IS the ring index. Returns null
+   * for never-written or recycled rings.
    */
-  getSegmentInfoFromFaceIndex(faceIndex: number): {
+  getSegmentInfo(ringIndex: number): {
     ringIndex: number;
     slot: number;
     missed: boolean;
     leaderIndex: number;
     slotsBehindHead: number;
   } | null {
-    const ring = Math.floor(faceIndex / CrystalAxis.TRIS_PER_SHARD);
-    if (ring < 0 || ring >= this.maxSegments) return null;
-    const birth = this.segmentBirth[ring];
+    if (ringIndex < 0 || ringIndex >= this.maxSegments) return null;
+    const birth = this.segmentBirth[ringIndex];
     if (birth < 0) return null;
     return {
-      ringIndex: ring,
-      slot: this.segmentSlots[ring],
-      missed: this.segmentMissed[ring] === 1,
-      leaderIndex: this.segmentLeaders[ring],
+      ringIndex,
+      slot: this.segmentSlots[ringIndex],
+      missed: this.segmentMissed[ringIndex] === 1,
+      leaderIndex: this.segmentLeaders[ringIndex],
       slotsBehindHead: this.headProgress - 1 - birth,
     };
   }
 
   dispose(): void {
-    this.tailGeo.dispose();
-    this.tailMat.dispose();
-    this.nucleus.geometry.dispose();
-    this.nucleusMat.dispose();
-    for (const r of this.ribbons) r.geometry.dispose();
-    for (const rm of this.ribbonMats) rm.dispose();
+    for (const g of this.gemMeshes) g.geometry.dispose();
+    this.gemMat.dispose();
+    this.druzyMesh.geometry.dispose();
+    this.druzyMat.dispose();
+    this.stem.geometry.dispose();
+    this.stemMat.dispose();
     this.coma.geometry.dispose();
     this.comaMat.dispose();
     this.grabRT?.dispose();
+    this.envRT?.dispose();
   }
 }

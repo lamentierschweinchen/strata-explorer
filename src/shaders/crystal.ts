@@ -1,474 +1,555 @@
-// Crystalline-comet shaders — three cooperating materials:
+// Crystalline-cluster shader patches.
 //
-//   SHARD   — the tail stream data: one slim crystal needle per slot, embedded as
-//             glints inside the tail's light. Young = icy, luminous, scattered;
-//             settled = dark, aligned, fused into the braid.
-//   NUCLEUS — the growth front: a single elongated, many-faceted gem that REFRACTS
-//             the live scene behind it (screen-space grab pass + chromatic
-//             dispersion). Transparent like cut stone, not painted like a rock.
-//   RIBBON  — the tail's body: layered camera-facing volumes of flowing light
-//             along the tail curve (replaces the old thin spine tube). Carries the
-//             photographic comet-tail read; the shards carry the data.
+// The cluster's bodies are real THREE.MeshPhysicalMaterial / MeshStandardMaterial
+// surfaces — environment-lit, clearcoated, iridescent — NOT hand-rolled unlit
+// shaders (the four rejected centerpieces all were). Everything data-driven is
+// injected into the stock shaders via material.onBeforeCompile:
 //
-// Shard/ribbon positioning that affects raycasts stays CPU-side (see CrystalAxis);
-// ribbons billboard in the vertex stage (cosmetic only, never raycast).
+//   GEM    — per-instance age (slots behind head) drives the gem → matrix finality
+//            transition: saturated Solana-family color, inner light, roughness and
+//            REFRACTION all decay as a crystal roots. Refraction is a custom
+//            volume-refraction port of three's transmission chunk that samples a
+//            full-scene grab texture (CrystalAxis renders it per frame), because
+//            the stock transmission pass renders ONLY opaque objects — the
+//            starfield / validator cloud / beams are additive-transparent and
+//            would never bend through the stones. material.transmission stays 0
+//            so the renderer keeps the mesh in the opaque pass (correct depth,
+//            no wasted built-in transmission render).
+//   SOLID  — druzy micro-crystals: same aging ramps, no refraction. Glitter as
+//            TEXTURE: thousands of real flat facets catching the environment.
+//   STEM   — the botryoidal matrix mass the cluster grows from: dark, rough,
+//            crevice-shaded, with the amber EMBER BAND burning at finality depth
+//            and a druzy speckle zone near the head.
 //
 // Hard-won craft rules (see git log):
 //  • GLSL compiles at runtime — verify in a real browser, console clean.
-//  • NaN discipline: guard EVERY normalize()/divide that can degenerate — including
-//    refract() at total internal reflection (returns vec3(0)).
-//  • Exposure discipline: bloom threshold is 0.72 — broad zones stay below it
-//    (luma soft-compression); pixel-scale glints and facet-edge wires may cross.
-//  • Texture bar: must hold up zoomed-in (striations, interior veils, dispersion).
+//  • NaN discipline: guard EVERY normalize()/divide that can degenerate —
+//    including refract() at TIR and zero-scaled instances.
+//  • Exposure discipline: bloom threshold is 0.72 — broad zones stay below it;
+//    pixel-scale glints and the momentary nucleation flash may cross.
+//  • Texture bar: must hold up zoomed-in (striations, noise roughness, facets).
+
+import type * as THREE from 'three';
 
 // ---------------------------------------------------------------------------------
-// Shared GLSL helpers
+// Shared uniform record — CrystalAxis owns one instance and merges it into every
+// patched shader, so per-frame updates reach all cluster materials at once.
 // ---------------------------------------------------------------------------------
-const GLSL_COMMON = /* glsl */ `
-  float hash13(vec3 p) {
+export interface ClusterUniforms {
+  [key: string]: THREE.IUniform;
+}
+
+// ---------------------------------------------------------------------------------
+// GLSL helpers (cluster-prefixed to avoid colliding with three's chunk symbols)
+// ---------------------------------------------------------------------------------
+const GLSL_HELPERS = /* glsl */ `
+  float chash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+  }
+  float chash13(vec3 p) {
     p = fract(p * 0.1031);
     p += dot(p, p.zyx + 31.32);
     return fract((p.x + p.y) * p.z);
   }
-  float noise3(vec3 p) {
+  float cnoise3(vec3 p) {
     vec3 i = floor(p);
     vec3 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
-    float n000 = hash13(i);
-    float n100 = hash13(i + vec3(1.0, 0.0, 0.0));
-    float n010 = hash13(i + vec3(0.0, 1.0, 0.0));
-    float n110 = hash13(i + vec3(1.0, 1.0, 0.0));
-    float n001 = hash13(i + vec3(0.0, 0.0, 1.0));
-    float n101 = hash13(i + vec3(1.0, 0.0, 1.0));
-    float n011 = hash13(i + vec3(0.0, 1.0, 1.0));
-    float n111 = hash13(i + vec3(1.0, 1.0, 1.0));
+    float n000 = chash13(i);
+    float n100 = chash13(i + vec3(1.0, 0.0, 0.0));
+    float n010 = chash13(i + vec3(0.0, 1.0, 0.0));
+    float n110 = chash13(i + vec3(1.0, 1.0, 0.0));
+    float n001 = chash13(i + vec3(0.0, 0.0, 1.0));
+    float n101 = chash13(i + vec3(1.0, 0.0, 1.0));
+    float n011 = chash13(i + vec3(0.0, 1.0, 1.0));
+    float n111 = chash13(i + vec3(1.0, 1.0, 1.0));
     return mix(
       mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y),
       mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y),
       f.z);
   }
-  float fbm3(vec3 p) {
+  float cfbm3(vec3 p) {
     float v = 0.0;
-    v += 0.5 * noise3(p);
-    v += 0.25 * noise3(p * 2.03 + 5.1);
-    v += 0.125 * noise3(p * 4.01 + 9.7);
+    v += 0.5 * cnoise3(p);
+    v += 0.25 * cnoise3(p * 2.03 + 5.1);
+    v += 0.125 * cnoise3(p * 4.01 + 9.7);
     return v;
   }
-  vec3 safeN(vec3 v) {
-    float l = length(v);
-    return l > 1e-4 ? v / l : vec3(0.0, 1.0, 0.0);
-  }
-  vec3 compress(vec3 c, float k) {
-    float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
-    return c / (1.0 + luma * k);
+  // Solana jewel axis: green (0) → magenta (0.5) → purple (1). Saturated, never pastel.
+  vec3 clusterFamilyColor(float h) {
+    vec3 a = mix(uFamGreen, uFamMagenta, smoothstep(0.0, 0.5, h));
+    return mix(a, uFamPurple, smoothstep(0.5, 1.0, h));
   }
 `;
 
 // ---------------------------------------------------------------------------------
-// SHARD — one crystal needle per slot, CPU-positioned along the tail curve
+// Vertex-stage injection (gem + druzy: instanced; stem has its own)
 // ---------------------------------------------------------------------------------
-export const shardVertexShader = /* glsl */ `
-  attribute float aGlow;
-  attribute float aMissed;
+const INSTANCED_VERTEX_DECLS = /* glsl */ `
+  attribute float aBirth;
+  attribute float aHue;
   attribute float aSeed;
-  attribute float aAge;
-  attribute float aS;
-
-  varying vec3 vWorldNormal;
-  varying vec3 vWorldPos;
-  varying vec3 vLocalPos;
-  varying vec2 vUv;
-  varying float vGlow;
-  varying float vMissed;
-  varying float vSeed;
-  varying float vAge;
-  varying float vS;
-
-  void main() {
-    vGlow = aGlow;
-    vMissed = aMissed;
-    vSeed = aSeed;
-    vAge = aAge;
-    vS = aS;
-    vUv = uv;
-    vLocalPos = position;
-
-    vec4 wp = modelMatrix * vec4(position, 1.0);
-    vWorldPos = wp.xyz;
-    vWorldNormal = normalize(mat3(modelMatrix) * normal);
-    gl_Position = projectionMatrix * viewMatrix * wp;
-  }
+  attribute float aMissed;
+  uniform float uScroll;
+  uniform float uSpacing;
+  uniform float uStartS;
+  uniform float uFinality;
+  uniform float uFlashE;
+  uniform float uStruckBirth;
+  varying vec3 vCluLocal;
+  varying vec3 vCluWorldPos;
+  varying vec3 vCluYAxisView;
+  varying float vCluScale;
+  varying float vCluAge;
+  varying float vCluS;
+  varying float vCluHue;
+  varying float vCluSeed;
+  varying float vCluMissed;
+  varying float vCluFlash;
 `;
 
-export const shardFragmentShader = /* glsl */ `
-  precision highp float;
+const INSTANCED_VERTEX_MAIN = /* glsl */ `
+  vCluLocal = position;
+  vCluHue = aHue;
+  vCluSeed = aSeed;
+  vCluMissed = aMissed;
+  float cluBehind = uScroll - 1.0 - aBirth;
+  vCluAge = cluBehind / uFinality;            // intentionally unclamped: >1 = deep matrix
+  vCluS = uStartS + cluBehind * uSpacing;
+  vCluFlash = uFlashE * step(abs(aBirth - uStruckBirth), 0.5);
+  #ifdef USE_INSTANCING
+    mat4 cluModel = modelMatrix * instanceMatrix;
+  #else
+    mat4 cluModel = modelMatrix;
+  #endif
+  vCluWorldPos = (cluModel * vec4(position, 1.0)).xyz;
+  vec3 cluAxis = cluModel[1].xyz;
+  float cluAxisLen = length(cluAxis);
+  vCluScale = cluAxisLen;
+  // Zero-scaled (unused ring) instances rasterize nothing, but keep the math finite.
+  cluAxis = cluAxisLen > 1e-5 ? cluAxis / cluAxisLen : vec3(0.0, 1.0, 0.0);
+  vCluYAxisView = (viewMatrix * vec4(cluAxis, 0.0)).xyz;
+`;
 
-  varying vec3 vWorldNormal;
-  varying vec3 vWorldPos;
-  varying vec3 vLocalPos;
-  varying vec2 vUv;
-  varying float vGlow;
-  varying float vMissed;
-  varying float vSeed;
-  varying float vAge;
-  varying float vS;
-
+// ---------------------------------------------------------------------------------
+// Fragment-stage shared decls (gem + druzy)
+// ---------------------------------------------------------------------------------
+const INSTANCED_FRAGMENT_DECLS = /* glsl */ `
   uniform float uTime;
   uniform float uBreath;
-  uniform float uTipPulse;
   uniform float uFadeS;
-  uniform vec3 uYoungColor;
-  uniform vec3 uSettingColor;
-  uniform vec3 uFinalColor;
-  uniform vec3 uCoreColor;
-
-  ${'__COMMON__'}
-
-  void main() {
-    vec3 V = safeN(cameraPosition - vWorldPos);
-    vec3 N = safeN(vWorldNormal);
-
-    // Fine growth striations along the needle; grain kept whisper-quiet — noisy
-    // normals read as dirt, clean facets read as ice.
-    float striae = sin(vUv.y * 30.0 + vSeed * 31.0 + noise3(vLocalPos * 2.1) * 2.0);
-    N = safeN(N + vec3(0.0, striae * 0.03, 0.0));
-
-    float NdotV = dot(N, V);
-    float fres = 1.0 - abs(NdotV);
-
-    float deepFade = 1.0 - smoothstep(uFadeS - 22.0, uFadeS, vS);
-
-    // --- Missed slot: a cold cinder — fractured, lightless, permanent ---
-    if (vMissed > 0.5) {
-      float crack = step(0.52, fbm3(vLocalPos * 3.4 + vSeed * 9.0));
-      float rim = pow(fres, 3.5);
-      vec3 c = vec3(0.020, 0.014, 0.034) * (0.6 + 0.4 * crack)
-             + vec3(0.09, 0.05, 0.15) * rim;
-      gl_FragColor = vec4(c, (0.50 + rim * 0.25) * deepFade);
-      return;
-    }
-
-    float youngF = 1.0 - smoothstep(0.0, 0.30, vAge);
-    float setF   = smoothstep(0.08, 0.40, vAge) * (1.0 - smoothstep(0.52, 0.86, vAge));
-    float finalF = smoothstep(0.60, 1.0, vAge);
-    float breath = 0.86 + 0.28 * uBreath;
-
-    // Interior parallax inclusions through the facets (still drifting while young)
-    vec3 Rr = refract(-V, N, 0.66);
-    if (dot(Rr, Rr) < 1e-6) Rr = reflect(-V, N); // TIR guard
-    vec3 drift = vec3(0.0, -uTime * 0.02, 0.0) * (youngF + setF * 0.4);
-    float incl = fbm3(vLocalPos * 0.9 + vSeed * 23.0 + drift + Rr * 1.6)
-               + fbm3(vLocalPos * 2.3 + vSeed * 23.0 + drift * 1.5 + Rr * 3.4) * 0.5;
-    incl /= 1.5;
-    float inclMask = smoothstep(0.40, 0.78, incl);
-    vec3 inclusionCol = mix(vec3(0.16, 0.13, 0.24), vec3(0.45, 0.72, 1.0),
-                            clamp(youngF + setF * 0.35, 0.0, 1.0)) * inclMask;
-
-    vec3 baseColor = uYoungColor * youngF + uSettingColor * setF + uFinalColor * finalF;
-    baseColor *= mix(0.82 + 0.36 * fract(vSeed * 7.31), 1.0, finalF * 0.6);
-    baseColor *= 0.95 + 0.05 * striae;
-    baseColor = mix(baseColor, baseColor * baseColor * 2.2, (1.0 - fres) * 0.45);
-    baseColor += inclusionCol * (0.20 + 0.40 * youngF);
-
-    vec3 L1 = normalize(vec3(0.45, 0.85, 0.30));
-    vec3 L2 = normalize(vec3(-0.65, 0.20, -0.55));
-    float shin = mix(190.0, 40.0, vAge);
-    vec3 H1 = L1 + V; H1 /= max(length(H1), 0.02);
-    vec3 H2 = L2 + V; H2 /= max(length(H2), 0.02);
-    float s1 = pow(max(dot(N, H1), 0.0), shin);
-    float s2 = pow(max(dot(N, H2), 0.0), shin * 0.5);
-    float spec = (s1 + s2 * 0.45) * (0.45 + 0.95 * youngF + 0.30 * setF);
-    float diff = max(dot(N, L1), 0.0) * 0.55 + max(dot(N, L2), 0.0) * 0.25 + 0.2;
-
-    vec3 Rref = reflect(-V, N);
-    float sky = smoothstep(-0.35, 0.85, Rref.y);
-    vec3 envCol = mix(vec3(0.04, 0.05, 0.10), vec3(0.55, 0.72, 1.05), sky);
-    float reflAmt = (0.10 + 0.55 * pow(fres, 2.0)) * (0.30 + 0.60 * youngF + 0.25 * setF);
-
-    // Pixel-scale glitter — the crystalline identity at every distance.
-    vec3 gCell = floor(vLocalPos * 5.5 + vSeed * 31.0);
-    float gSel = step(0.60, hash13(gCell + 5.0));
-    vec3 gV = vec3(hash13(gCell + 11.1), hash13(gCell + 27.7), hash13(gCell + 43.3)) * 2.0 - 1.0;
-    vec3 gN = gV / max(length(gV), 0.05);
-    float glitter = pow(max(dot(reflect(-V, N), gN), 0.0), 44.0) * gSel;
-
-    // Inner light from the nucleus; surges with each accretion.
-    float nd = length(vLocalPos);
-    float veil = fbm3(vLocalPos * 0.8 + vSeed * 5.0 + Rr * 1.2);
-    float sss = exp(-max(nd - 10.0, 0.0) / 34.0)
-              * (0.45 + 0.55 * veil)
-              * (0.55 + 0.30 * uBreath + 1.30 * uTipPulse);
-    vec3 sssCol = mix(uYoungColor, uCoreColor, 0.40) * sss;
-
-    vec3 glowCol = mix(uCoreColor, uYoungColor, 0.45) * vGlow;
-
-    vec3 disp = vec3(pow(fres, 2.4), pow(fres, 3.1), pow(fres, 4.2))
-              * vec3(1.0, 0.85, 1.15) * (0.45 * youngF + 0.20 * setF);
-
-    float rim = pow(fres, 2.2) * (youngF * 0.85 + setF * 0.45) + pow(fres, 3.5) * finalF * 0.8;
-    vec3 rimCol = mix(mix(uYoungColor, vec3(0.55, 0.72, 1.0), 0.5),
-                      vec3(0.30, 0.34, 0.58), finalF);
-
-    float forming = smoothstep(0.05, 0.0, vAge);
-    float formShimmer = noise3(vLocalPos * 2.4 + uTime * vec3(0.4, 0.9, 0.4));
-    vec3 formCol = mix(uCoreColor, uYoungColor, 0.4) * forming
-                 * (0.15 + 0.40 * formShimmer) * (1.0 + 1.2 * uTipPulse);
-
-    float emissive = youngF * 0.55 + setF * 0.18 + finalF * 0.04;
-    vec3 col = baseColor * (diff * 0.5 + emissive) * breath;
-    col += envCol * reflAmt;
-    col += mix(vec3(0.8, 0.9, 1.05), uCoreColor, 0.4) * spec * (0.55 + 0.85 * youngF);
-    col += rimCol * rim * 0.55 * breath;
-    col += sssCol * (0.45 + 0.55 * clamp(youngF + setF, 0.0, 1.0));
-    col += glowCol * 0.85;
-    col += disp * 0.5;
-    col += formCol;
-
-    col = compress(col, 0.30);
-    col += vec3(0.9, 0.95, 1.1) * glitter * (0.30 + 0.60 * (youngF + setF * 0.5));
-
-    float alpha = (youngF * 0.62 + setF * 0.80 + finalF * 0.94)
-                + spec * 0.6 + rim * 0.30 + glitter * 0.25
-                + sss * 0.18 + vGlow * 0.30 + forming * 0.12;
-    alpha *= deepFade;
-    col *= (0.35 + 0.65 * deepFade);
-
-    gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
-  }
-`.replace('__COMMON__', GLSL_COMMON);
-
-// ---------------------------------------------------------------------------------
-// NUCLEUS — a refractive cut gem: the scene bends through it (grab-pass texture)
-// ---------------------------------------------------------------------------------
-export const nucleusVertexShader = /* glsl */ `
-  varying vec3 vWorldNormal;
-  varying vec3 vWorldPos;
-  varying vec3 vLocalPos;
-  varying vec3 vLocalNormal;
-
-  void main() {
-    vLocalPos = position;
-    vLocalNormal = normal;
-    vec4 wp = modelMatrix * vec4(position, 1.0);
-    vWorldPos = wp.xyz;
-    vWorldNormal = normalize(mat3(modelMatrix) * normal);
-    gl_Position = projectionMatrix * viewMatrix * wp;
-  }
-`;
-
-export const nucleusFragmentShader = /* glsl */ `
-  precision highp float;
-
-  varying vec3 vWorldNormal;
-  varying vec3 vWorldPos;
-  varying vec3 vLocalPos;
-  varying vec3 vLocalNormal;
-
-  uniform float uTime;
-  uniform float uBreath;
-  uniform float uTipPulse;
-  uniform float uNucleusRadius;
-  uniform sampler2D uGrabTex;   // the live scene WITHOUT the gem (half-res)
-  uniform vec2 uGrabRes;        // full drawing-buffer size (for gl_FragCoord → UV)
-  uniform float uRefractK;      // screen-space refraction strength
-  uniform vec3 uYoungColor;
-  uniform vec3 uSettingColor;
-  uniform vec3 uCoreColor;
-  uniform vec3 uInclusionColor;
-  uniform vec3 uWarmColor;
-
-  ${'__COMMON__'}
-
-  void main() {
-    vec3 V = safeN(cameraPosition - vWorldPos);
-    vec3 N = safeN(vWorldNormal);
-
-    // Whisper-quiet growth striations: enough to make the refraction waver like
-    // real ice, never enough to read as surface dirt.
-    float striae = sin(vLocalPos.y * 2.6 + noise3(vLocalPos * 0.7) * 3.0);
-    N = safeN(N + vec3(0.0, striae * 0.018, 0.0) );
-
-    float NdotV = dot(N, V);
-    float fres = 1.0 - abs(NdotV);
-    float rFrac = length(vLocalPos) / max(uNucleusRadius, 0.001);
-
-    // ---------- TRANSMISSION: the world, bent through the stone ----------
-    // Refract per-channel (chromatic dispersion), project into screen space and
-    // sample the grab texture. TIR-guarded; offsets scale with apparent size so
-    // the bend is stable across zoom.
-    vec2 baseUV = gl_FragCoord.xy / uGrabRes;
-    float viewDist = max(distance(cameraPosition, vWorldPos), 1.0);
-    float offScale = uRefractK * uNucleusRadius / viewDist;
-
-    vec3 Rr = refract(-V, N, 0.66);
-    if (dot(Rr, Rr) < 1e-6) Rr = reflect(-V, N);
-    vec3 Rg = refract(-V, N, 0.655);
-    if (dot(Rg, Rg) < 1e-6) Rg = Rr;
-    vec3 Rb = refract(-V, N, 0.645);
-    if (dot(Rb, Rb) < 1e-6) Rb = Rr;
-
-    vec2 oR = (mat3(viewMatrix) * Rr).xy * offScale;
-    vec2 oG = (mat3(viewMatrix) * Rg).xy * offScale;
-    vec2 oB = (mat3(viewMatrix) * Rb).xy * offScale;
-    vec3 grab;
-    grab.r = texture2D(uGrabTex, baseUV + oR).r;
-    grab.g = texture2D(uGrabTex, baseUV + oG).g;
-    grab.b = texture2D(uGrabTex, baseUV + oB).b;
-
-    // Per-facet value variation — every cut face catches the world differently.
-    // Hashed from the FLAT local normal, so it is stable per facet and snaps at
-    // the edges (the jewel signature; smooth shading would kill it).
-    float facetKey = hash13(floor(safeN(vLocalNormal) * 6.5) + 3.0);
-    float facetTint = 0.80 + 0.40 * facetKey;
-
-    // Absorption: looking deeper through the body tints toward glacial blue.
-    float depthLook = (1.0 - fres) * (0.45 + 0.55 * (1.0 - rFrac));
-    vec3 absorb = mix(vec3(1.0), vec3(0.66, 0.82, 1.12), clamp(depthLook, 0.0, 1.0));
-    float transmission = (1.0 - fres * 0.75);
-    vec3 col = grab * absorb * transmission * 1.15 * facetTint;
-
-    // ---------- INTERIOR: the stone is itself a light source ----------
-    vec3 driftv = vec3(0.0, -uTime * 0.012, 0.0);
-    float veil = fbm3(vLocalPos * 0.16 + driftv + Rr * 1.6);
-    float wisp = 1.0 - abs(2.0 * fbm3(vLocalPos * 0.55 + driftv * 1.6 + Rr * 2.6) - 1.0);
-    wisp = pow(wisp, 5.0);
-    float amberVein = pow(1.0 - abs(2.0 * fbm3(vLocalPos * 0.22 + vec3(9.2) + driftv * 0.7 + Rr * 1.8) - 1.0), 7.0);
-
-    // Cool body luminescence textured by the veils — transmission of empty space
-    // must never read as mud; the gem holds the chain's light.
-    col += mix(uSettingColor, uYoungColor, 0.65) * (0.045 + 0.075 * veil)
-         * (0.55 + 0.45 * (1.0 - fres)) * facetTint;
-
-    // The heart: a hot core deep inside, breathing, flaring on each accretion.
-    float heart = exp(-rFrac * 2.2) * (0.55 + 0.45 * veil);
-    float heartDrive = 0.55 + 0.22 * uBreath + 1.7 * uTipPulse;
-    col += uCoreColor * heart * heartDrive * 0.70;
-    // Gold lives near the heart only — kept faint so the body never turns muddy.
-    col += uInclusionColor * amberVein * (0.05 + 0.05 * veil) * (0.25 + 0.75 * heart);
-    col += mix(uYoungColor, uCoreColor, 0.5) * wisp * (0.10 + 0.30 * heart * heartDrive);
-
-    // ---------- SURFACE: reflection, facet wires, sparkle ----------
-    vec3 L1 = normalize(vec3(0.45, 0.85, 0.30));
-    vec3 L2 = normalize(vec3(-0.65, 0.20, -0.55));
-    vec3 H1 = L1 + V; H1 /= max(length(H1), 0.02);
-    vec3 H2 = L2 + V; H2 /= max(length(H2), 0.02);
-    float spec = pow(max(dot(N, H1), 0.0), 240.0) + pow(max(dot(N, H2), 0.0), 120.0) * 0.4;
-
-    vec3 Rref = reflect(-V, N);
-    float sky = smoothstep(-0.35, 0.85, Rref.y);
-    vec3 envCol = mix(vec3(0.03, 0.04, 0.08), vec3(0.50, 0.68, 1.02), sky);
-    col += envCol * (0.05 + 0.45 * pow(fres, 2.5));
-
-    // Facet-edge wires: the signature of a cut stone. Flat-shaded normals jump at
-    // facet boundaries → fwidth spikes exactly one pixel wide there.
-    float ew = clamp(length(fwidth(normalize(vLocalNormal))) * 2.2, 0.0, 1.0);
-    ew = smoothstep(0.18, 0.9, ew);
-
-    // Accretion warmth — absorbed gold, cooling back to ice.
-    col = mix(col, col * uWarmColor * 1.30, clamp(uTipPulse, 0.0, 1.0) * 0.28);
-
-    col = compress(col, 0.40);
-
-    // Above the rolloff: glints that are allowed to bloom (pixel-scale only).
-    col += mix(vec3(0.85, 0.92, 1.1), uCoreColor, 0.5) * spec * 0.9;
-    col += vec3(0.85, 0.92, 1.10) * ew * (0.10 + 0.55 * fres + 0.35 * uTipPulse);
-
-    gl_FragColor = vec4(col, 0.985);
-  }
-`.replace('__COMMON__', GLSL_COMMON);
-
-// ---------------------------------------------------------------------------------
-// RIBBON — layered camera-facing volumes of light along the tail curve
-// ---------------------------------------------------------------------------------
-export const ribbonVertexShader = /* glsl */ `
-  attribute vec3 aTan;   // curve tangent at this ring (mesh-local)
-  attribute float aS;    // arc-length behind the nucleus
-  attribute float aSide; // -1 | +1 across the ribbon
-
-  varying float vS;
-  varying float vSide;
-  varying vec3 vWorldPos;
-
-  uniform float uWidth;      // base half-width at the head
-  uniform float uFadeS;
-
-  void main() {
-    vS = aS;
-    vSide = aSide;
-
-    vec4 wp = modelMatrix * vec4(position, 1.0);
-    vec3 tw = normalize(mat3(modelMatrix) * aTan);
-    vec3 viewDir = wp.xyz - cameraPosition;
-    vec3 perp = cross(tw, viewDir);
-    float pl = length(perp);
-    perp = pl > 1e-4 ? perp / pl : vec3(0.0, 1.0, 0.0); // looking down the tail
-
-    // Width: emerges from inside the gem, swells just behind it, tapers long.
-    float head = smoothstep(0.0, 14.0, aS);
-    float w = uWidth * head * (0.34 + 0.66 * exp(-aS / 70.0));
-    wp.xyz += perp * w * aSide;
-
-    vWorldPos = wp.xyz;
-    gl_Position = projectionMatrix * viewMatrix * wp;
-  }
-`;
-
-export const ribbonFragmentShader = /* glsl */ `
-  precision highp float;
-
-  varying float vS;
-  varying float vSide;
-  varying vec3 vWorldPos;
-
-  uniform float uTime;
-  uniform float uBreath;
-  uniform float uTipPulse;
+  uniform float uEmberS;
+  uniform float uEmberW;
   uniform float uStrikeT;
   uniform float uWaveSpeed;
-  uniform float uHistoryS;
-  uniform float uSettleS;
-  uniform float uIntensity;  // per-layer brightness
-  uniform float uSeed;       // de-syncs layer noise
-  uniform float uFlow;       // filament drift speed
-  uniform vec3 uYoungColor;
-  uniform vec3 uSettingColor;
-  uniform vec3 uCoreColor;
+  uniform vec3 uFamPurple;
+  uniform vec3 uFamMagenta;
+  uniform vec3 uFamGreen;
+  uniform vec3 uMatrixCol;
+  uniform vec3 uEmberCol;
+  uniform vec3 uCoreCol;
+  uniform float uGemRough;
+  uniform float uMatrixRough;
+  varying vec3 vCluLocal;
+  varying vec3 vCluWorldPos;
+  varying vec3 vCluYAxisView;
+  varying float vCluScale;
+  varying float vCluAge;
+  varying float vCluS;
+  varying float vCluHue;
+  varying float vCluSeed;
+  varying float vCluMissed;
+  varying float vCluFlash;
+`;
 
-  ${'__COMMON__'}
+// Stochastic dissolve into space at the far end of the record (opaque pass —
+// no blend-sorting woes; the film-grain pass and DoF absorb the dither).
+const FADE_DITHER = /* glsl */ `
+  float cluFade = 1.0 - smoothstep(uFadeS - 18.0, uFadeS, vCluS);
+  if (cluFade < 0.999 &&
+      chash12(gl_FragCoord.xy + vec2(vCluSeed * 191.7, vCluSeed * 313.1)) > cluFade) discard;
+`;
 
-  void main() {
-    // Soft volume profile across the ribbon.
-    float across = 1.0 - vSide * vSide;
-    across = pow(max(across, 0.0), 1.9);
+// Shared zone factors — emitted right after color_fragment so later patches reuse them.
+const ZONE_FACTORS = /* glsl */ `
+  float cluAge01 = clamp(vCluAge, 0.0, 1.0);
+  float cluYoung = 1.0 - smoothstep(0.0, 0.35, cluAge01);
+  float cluMatrixF = smoothstep(0.70, 0.98, cluAge01);
+  vec3 cluGem = clusterFamilyColor(vCluHue) * (0.88 + 0.24 * fract(vCluSeed * 7.31));
+  float cluEmber = exp(-pow(vCluS - uEmberS, 2.0) / max(uEmberW * uEmberW, 1.0));
+  float cluWS = uStrikeT * uWaveSpeed;
+  float cluWave = exp(-pow(vCluS - cluWS, 2.0) / 48.0) * exp(-uStrikeT * 2.0);
+`;
 
-    float settle = clamp(vS / max(uSettleS, 0.001), 0.0, 1.0);
-    float settleC = clamp(vS / max(uSettleS * 0.62, 0.001), 0.0, 1.0);
+// ---------------------------------------------------------------------------------
+// Custom volume refraction — a port of three r183's transmission chunk that samples
+// the cluster's own full-scene grab texture (uGrabTex) instead of the renderer's
+// opaque-only transmission buffer. Per-channel dispersion always on. All names
+// cluster-prefixed; stock chunk compiles empty (material.transmission == 0).
+// ---------------------------------------------------------------------------------
+const GEM_REFRACTION_PARS = /* glsl */ `
+  uniform sampler2D uGrabTex;
+  uniform vec2 uGrabSize;
+  uniform float uCluIor;
+  uniform float uCluThickness;
+  uniform float uCluDispersion;
+  uniform float uCluAttDist;
+  uniform mat4 projectionMatrix;
 
-    // Luminosity dies as the record settles; a faint ember floor lingers mid-tail.
-    float glow = exp(-vS / 38.0) * 0.80 + (1.0 - settle) * 0.20;
+  float cluW0(float a) { return (1.0 / 6.0) * (a * (a * (-a + 3.0) - 3.0) + 1.0); }
+  float cluW1(float a) { return (1.0 / 6.0) * (a * a * (3.0 * a - 6.0) + 4.0); }
+  float cluW2(float a) { return (1.0 / 6.0) * (a * (a * (-3.0 * a + 3.0) + 3.0) + 1.0); }
+  float cluW3(float a) { return (1.0 / 6.0) * (a * a * a); }
+  float cluG0(float a) { return cluW0(a) + cluW1(a); }
+  float cluG1(float a) { return cluW2(a) + cluW3(a); }
+  float cluH0(float a) { return -1.0 + cluW1(a) / (cluW0(a) + cluW1(a)); }
+  float cluH1(float a) { return 1.0 + cluW3(a) / (cluW2(a) + cluW3(a)); }
 
-    // Filamentary structure flowing away from the head — the streamers that make a
-    // comet tail read photographic instead of airbrushed.
-    float fil = fbm3(vec3(vS * 0.30 - uTime * uFlow, vSide * 1.9 + uSeed * 7.0, uSeed));
-    fil = 1.0 - abs(2.0 * fil - 1.0);
-    fil = pow(fil, 2.6);
-    float texAmt = 0.45 + 0.55 * fil;
-
-    // Accretion cascade racing down the tail.
-    float ws = uStrikeT * uWaveSpeed;
-    float wave = exp(-pow(vS - ws, 2.0) / 55.0) * exp(-uStrikeT * 1.9);
-
-    float history = 1.0 - smoothstep(uHistoryS - 8.0, uHistoryS, vS);
-    float breath = 0.84 + 0.16 * uBreath;
-    float nearBoost = 1.0 + uTipPulse * 1.2 * exp(-vS / 18.0);
-
-    vec3 col = mix(uYoungColor, uSettingColor, settleC) * 0.9;
-    col += uCoreColor * wave * 0.6;
-    col = compress(col, 0.25);
-
-    float alpha = across * glow * texAmt * history * breath * nearBoost * uIntensity
-                + wave * across * history * uIntensity * 0.30;
-
-    gl_FragColor = vec4(col, clamp(alpha, 0.0, 0.8));
+  vec4 cluBicubic(sampler2D tex, vec2 uv, vec4 texelSize, float lod) {
+    uv = uv * texelSize.zw + 0.5;
+    vec2 iuv = floor(uv);
+    vec2 fuv = fract(uv);
+    float g0x = cluG0(fuv.x);
+    float g1x = cluG1(fuv.x);
+    float h0x = cluH0(fuv.x);
+    float h1x = cluH1(fuv.x);
+    float h0y = cluH0(fuv.y);
+    float h1y = cluH1(fuv.y);
+    vec2 p0 = (vec2(iuv.x + h0x, iuv.y + h0y) - 0.5) * texelSize.xy;
+    vec2 p1 = (vec2(iuv.x + h1x, iuv.y + h0y) - 0.5) * texelSize.xy;
+    vec2 p2 = (vec2(iuv.x + h0x, iuv.y + h1y) - 0.5) * texelSize.xy;
+    vec2 p3 = (vec2(iuv.x + h1x, iuv.y + h1y) - 0.5) * texelSize.xy;
+    return cluG0(fuv.y) * (g0x * textureLod(tex, p0, lod) + g1x * textureLod(tex, p1, lod)) +
+           cluG1(fuv.y) * (g0x * textureLod(tex, p2, lod) + g1x * textureLod(tex, p3, lod));
   }
-`.replace('__COMMON__', GLSL_COMMON);
+
+  vec4 cluTextureBicubic(sampler2D sampler, vec2 uv, float lod) {
+    vec2 fLodSize = vec2(textureSize(sampler, int(lod)));
+    vec2 cLodSize = vec2(textureSize(sampler, int(lod + 1.0)));
+    vec2 fLodSizeInv = 1.0 / max(fLodSize, vec2(1.0));
+    vec2 cLodSizeInv = 1.0 / max(cLodSize, vec2(1.0));
+    vec4 fSample = cluBicubic(sampler, uv, vec4(fLodSizeInv, fLodSize), floor(lod));
+    vec4 cSample = cluBicubic(sampler, uv, vec4(cLodSizeInv, cLodSize), ceil(lod));
+    return mix(fSample, cSample, fract(lod));
+  }
+
+  vec3 cluVolumeRay(const in vec3 n, const in vec3 v, const in float thickness, const in float ior) {
+    vec3 refractionVector = refract(-v, normalize(n), 1.0 / ior);
+    // TIR guard: refract() returns vec3(0) past the critical angle — normalize(0) is NaN
+    // (the bloom dark-blob scar). Fall back to the reflected ray.
+    float rl = length(refractionVector);
+    if (rl < 1e-5) return reflect(-v, normalize(n)) * thickness;
+    return (refractionVector / rl) * thickness;
+  }
+
+  float cluIorRoughness(const in float roughness, const in float ior) {
+    return roughness * clamp(ior * 2.0 - 2.0, 0.0, 1.0);
+  }
+
+  vec4 cluGrabSample(const in vec2 fragCoord, const in float roughness, const in float ior) {
+    float lod = log2(uGrabSize.x) * cluIorRoughness(roughness, ior);
+    return cluTextureBicubic(uGrabTex, fragCoord.xy, lod);
+  }
+
+  vec3 cluVolumeAttenuation(const in float transmissionDistance, const in vec3 attenuationColor, const in float attenuationDistance) {
+    vec3 attenuationCoefficient = -log(clamp(attenuationColor, vec3(0.02), vec3(0.99))) / max(attenuationDistance, 0.05);
+    return exp(-attenuationCoefficient * transmissionDistance); // Beer's law
+  }
+
+  vec4 cluIBLVolumeRefraction(const in vec3 n, const in vec3 v, const in float roughness, const in vec3 diffuseColor,
+    const in vec3 specularColor, const in float specularF90, const in vec3 position,
+    const in mat4 viewMat, const in mat4 projMat, const in float dispersion, const in float ior, const in float thickness,
+    const in vec3 attenuationColor, const in float attenuationDistance) {
+
+    vec4 transmittedLight;
+    vec3 transmittance;
+
+    // Per-channel ior spread — real chromatic fire, always on for the gems.
+    float halfSpread = (ior - 1.0) * 0.025 * dispersion;
+    vec3 iors = vec3(ior - halfSpread, ior, ior + halfSpread);
+
+    for (int i = 0; i < 3; i++) {
+      vec3 transmissionRay = cluVolumeRay(n, v, thickness, iors[i]);
+      vec3 refractedRayExit = position + transmissionRay;
+
+      vec4 ndcPos = projMat * viewMat * vec4(refractedRayExit, 1.0);
+      vec2 refractionCoords = ndcPos.xy / max(ndcPos.w, 1e-4);
+      refractionCoords += 1.0;
+      refractionCoords /= 2.0;
+
+      vec4 transmissionSample = cluGrabSample(refractionCoords, roughness, iors[i]);
+      transmittedLight[i] = transmissionSample[i];
+      transmittedLight.a += transmissionSample.a;
+
+      transmittance[i] = diffuseColor[i] * cluVolumeAttenuation(length(transmissionRay), attenuationColor, attenuationDistance)[i];
+    }
+    transmittedLight.a /= 3.0;
+
+    vec3 attenuatedColor = transmittance * transmittedLight.rgb;
+    vec3 F = EnvironmentBRDF(n, v, specularColor, specularF90, roughness);
+    float transmittanceFactor = (transmittance.r + transmittance.g + transmittance.b) / 3.0;
+    return vec4((1.0 - F) * attenuatedColor, 1.0 - (1.0 - transmittedLight.a) * transmittanceFactor);
+  }
+`;
+
+const GEM_REFRACTION_MAIN = /* glsl */ `
+  {
+    // Per-instance, age-driven refraction: young gems bend the live scene through
+    // their bodies (an accent over the lit, glowing stone — never a replacement:
+    // space is mostly dark, and a window onto darkness reads as dead glass);
+    // rooting crystals close down into opaque matrix.
+    float cluTrans = (1.0 - smoothstep(0.55, 0.92, cluAge01)) * 0.62;
+    if (cluTrans > 0.003) {
+      vec3 cluV = normalize(cameraPosition - vCluWorldPos);
+      vec3 cluN = inverseTransformDirection(normal, viewMatrix);
+      // Color from WITHIN: attenuation tinted by the crystal's own family hue.
+      vec3 cluAttC = clamp(mix(cluGem, vec3(1.0), 0.22), vec3(0.03), vec3(0.99));
+      vec4 cluTransmitted = cluIBLVolumeRefraction(
+        cluN, cluV, material.roughness, material.diffuseContribution,
+        material.specularColorBlended, material.specularF90,
+        vCluWorldPos, viewMatrix, projectionMatrix,
+        uCluDispersion, uCluIor, uCluThickness * max(vCluScale, 0.05),
+        cluAttC, uCluAttDist * max(vCluScale * 0.5, 0.2));
+      totalDiffuse = mix(totalDiffuse, cluTransmitted.rgb, cluTrans);
+    }
+  }
+`;
+
+// ---------------------------------------------------------------------------------
+// Patch application helpers
+// ---------------------------------------------------------------------------------
+type PatchedShader = {
+  uniforms: { [uniform: string]: THREE.IUniform };
+  vertexShader: string;
+  fragmentShader: string;
+};
+
+function injectInstancedVertex(shader: PatchedShader): void {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\n' + INSTANCED_VERTEX_DECLS)
+    .replace('#include <project_vertex>', '#include <project_vertex>\n' + INSTANCED_VERTEX_MAIN);
+}
+
+/**
+ * GEM — full surgery: aging ramps + striated normals + inner light + custom
+ * full-scene volume refraction with dispersion.
+ */
+export function applyGemPatches(shader: PatchedShader, uniforms: ClusterUniforms): void {
+  Object.assign(shader.uniforms, uniforms);
+  injectInstancedVertex(shader);
+
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>',
+      '#include <common>\n' + INSTANCED_FRAGMENT_DECLS + GLSL_HELPERS)
+    .replace('#include <transmission_pars_fragment>',
+      '#include <transmission_pars_fragment>\n' + GEM_REFRACTION_PARS)
+    .replace('#include <clipping_planes_fragment>',
+      '#include <clipping_planes_fragment>\n' + FADE_DITHER)
+    .replace('#include <color_fragment>',
+      '#include <color_fragment>\n' + ZONE_FACTORS + /* glsl */ `
+      // Saturated jewel body converging through deep violet into dark matrix.
+      vec3 cluMid = mix(cluGem, uFamPurple * 0.40, 0.55);
+      vec3 cluCol = mix(cluGem, cluMid, smoothstep(0.12, 0.62, cluAge01));
+      cluCol = mix(cluCol, uMatrixCol, cluMatrixF);
+      cluCol /= (1.0 + max(vCluAge - 1.0, 0.0) * 0.45); // deep history keeps settling
+      diffuseColor.rgb = cluCol;
+    `)
+    .replace('#include <roughnessmap_fragment>',
+      '#include <roughnessmap_fragment>\n' + /* glsl */ `
+      float cluRghStriae = sin(vCluLocal.y * 34.0 + vCluSeed * 47.0 + cnoise3(vCluLocal * 2.6) * 3.0);
+      roughnessFactor = mix(uGemRough, uMatrixRough, cluMatrixF)
+        + (cnoise3(vCluLocal * 9.0 + vCluSeed * 13.0) - 0.5) * 0.08
+        + cluRghStriae * 0.015;
+      roughnessFactor = clamp(roughnessFactor, 0.03, 0.92);
+    `)
+    .replace('#include <normal_fragment_maps>',
+      '#include <normal_fragment_maps>\n' + /* glsl */ `
+      {
+        // Growth striations along the prism axis + faint facet grain — enough to make
+        // light waver like real stone, never enough to read as dirt.
+        float cluStr = sin(vCluLocal.y * 26.0 + vCluSeed * 31.0 + cfbm3(vCluLocal * 1.8) * 4.0);
+        vec3 cluJ = vec3(
+          cnoise3(vCluLocal * 7.0 + vCluSeed * 17.0),
+          cnoise3(vCluLocal * 7.0 + vCluSeed * 17.0 + 7.7),
+          cnoise3(vCluLocal * 7.0 + vCluSeed * 17.0 + 13.3)) - 0.5;
+        float cluNAmt = mix(0.035, 0.085, smoothstep(0.70, 0.98, clamp(vCluAge, 0.0, 1.0)));
+        vec3 cluYV = vCluYAxisView;
+        float cluYL = length(cluYV);
+        cluYV = cluYL > 1e-4 ? cluYV / cluYL : vec3(0.0, 1.0, 0.0);
+        normal = normalize(normal + cluYV * cluStr * cluNAmt + cluJ * cluNAmt * 0.8);
+      }
+    `)
+    .replace('#include <emissivemap_fragment>',
+      '#include <emissivemap_fragment>\n' + /* glsl */ `
+      {
+        // Inner light: the stone holds the chain's light (reference 3 — the glow
+        // comes from INSIDE the object outward). Young growth burns saturated and
+        // breathing, textured by interior veils so it reads as material, never a
+        // flat wash; the mid violet zone keeps a quarter of it; the nucleation
+        // flash ignites the newest crystal; the strike wave races down the reef;
+        // the ember band burns amber as crystals root — then darkness.
+        float cluVeil = 0.50 + 0.50 * cfbm3(vCluLocal * 1.5 + vCluSeed * 9.0 + vec3(0.0, uTime * 0.03, 0.0));
+        float cluLitZone = cluYoung + 0.48 * (1.0 - cluYoung) * (1.0 - cluMatrixF);
+        vec3 cluGlowCol = mix(cluGem, uCoreCol, 0.30);
+        totalEmissiveRadiance += cluGlowCol * cluLitZone * cluVeil * (0.26 + 0.12 * uBreath);
+        totalEmissiveRadiance += mix(uCoreCol, cluGem, 0.4) * vCluFlash * 0.85;
+        totalEmissiveRadiance += cluGlowCol * cluWave * (0.22 * (1.0 - cluMatrixF * 0.8));
+        float cluDepthIn = 0.55 + 0.45 * cfbm3(vCluLocal * 0.9 + vCluSeed * 11.0);
+        totalEmissiveRadiance += uEmberCol * cluEmber * cluDepthIn
+          * (0.26 + 0.10 * uBreath) * (1.0 - cluMatrixF * 0.55);
+        totalEmissiveRadiance *= cluFade;
+      }
+    `)
+    .replace('#include <transmission_fragment>',
+      '#include <transmission_fragment>\n' + GEM_REFRACTION_MAIN);
+}
+
+/**
+ * SOLID — druzy micro-crystals: aging ramps + hot young sparkle, no refraction.
+ * Missed slots keep their micros dark and cracked-looking from birth (the vacancy).
+ */
+export function applySolidPatches(shader: PatchedShader, uniforms: ClusterUniforms): void {
+  Object.assign(shader.uniforms, uniforms);
+  injectInstancedVertex(shader);
+
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>',
+      '#include <common>\n' + INSTANCED_FRAGMENT_DECLS + GLSL_HELPERS)
+    .replace('#include <clipping_planes_fragment>',
+      '#include <clipping_planes_fragment>\n' + FADE_DITHER)
+    .replace('#include <color_fragment>',
+      '#include <color_fragment>\n' + ZONE_FACTORS + /* glsl */ `
+      vec3 cluTip = mix(cluGem, uCoreCol, 0.22 * cluYoung); // bright young points
+      vec3 cluCol = mix(cluTip, mix(cluGem, uFamPurple * 0.38, 0.6), smoothstep(0.10, 0.62, cluAge01));
+      cluCol = mix(cluCol, uMatrixCol, cluMatrixF);
+      cluCol /= (1.0 + max(vCluAge - 1.0, 0.0) * 0.45);
+      // The vacancy: a missed slot's micros are lightless cinders, permanently.
+      cluCol = mix(cluCol, uMatrixCol * 0.55, vCluMissed);
+      diffuseColor.rgb = cluCol;
+    `)
+    .replace('#include <roughnessmap_fragment>',
+      '#include <roughnessmap_fragment>\n' + /* glsl */ `
+      roughnessFactor = mix(uGemRough + 0.05, uMatrixRough, cluMatrixF)
+        + (chash13(vCluLocal * 5.0 + vCluSeed * 29.0) - 0.5) * 0.10;
+      roughnessFactor = clamp(roughnessFactor + vCluMissed * 0.25, 0.05, 0.95);
+    `)
+    .replace('#include <emissivemap_fragment>',
+      '#include <emissivemap_fragment>\n' + /* glsl */ `
+      {
+        float cluLive = 1.0 - vCluMissed; // cinders never emit
+        vec3 cluGlowCol = mix(cluGem, uCoreCol, 0.45);
+        float cluDruzyZone = cluYoung + 0.40 * (1.0 - cluYoung) * (1.0 - cluMatrixF);
+        totalEmissiveRadiance += cluGlowCol * cluDruzyZone * (0.30 + 0.14 * uBreath) * cluLive;
+        totalEmissiveRadiance += mix(uCoreCol, cluGem, 0.35) * vCluFlash * 1.2 * cluLive;
+        totalEmissiveRadiance += cluGlowCol * cluWave * 0.25 * cluLive * (1.0 - cluMatrixF * 0.8);
+        totalEmissiveRadiance += uEmberCol * cluEmber * (0.22 + 0.10 * uBreath)
+          * (1.0 - cluMatrixF * 0.5) * cluLive;
+        // Settled druzy keeps a rare, faint twinkle — the geode shell still glitters.
+        float cluTwk = step(0.992, chash13(vec3(vCluSeed * 97.0, floor(uTime * 2.0 + vCluSeed * 31.0), 7.0)));
+        totalEmissiveRadiance += uCoreCol * cluTwk * cluMatrixF * 0.09 * cluLive;
+        totalEmissiveRadiance *= cluFade;
+      }
+    `);
+}
+
+// ---------------------------------------------------------------------------------
+// STEM — the botryoidal matrix mass (non-instanced; aS/aCrev baked attributes)
+// ---------------------------------------------------------------------------------
+const STEM_VERTEX_DECLS = /* glsl */ `
+  attribute float aS;
+  attribute float aCrev;
+  varying vec3 vCluLocal;
+  varying float vCluS;
+  varying float vCluCrev;
+`;
+
+const STEM_VERTEX_MAIN = /* glsl */ `
+  vCluLocal = position;
+  vCluS = aS;
+  vCluCrev = aCrev;
+`;
+
+const STEM_FRAGMENT_DECLS = /* glsl */ `
+  uniform float uTime;
+  uniform float uBreath;
+  uniform float uFadeS;
+  uniform float uEmberS;
+  uniform float uEmberW;
+  uniform float uStrikeT;
+  uniform float uWaveSpeed;
+  uniform vec3 uFamPurple;
+  uniform vec3 uFamMagenta;
+  uniform vec3 uFamGreen;
+  uniform vec3 uMatrixCol;
+  uniform vec3 uEmberCol;
+  uniform vec3 uCoreCol;
+  varying vec3 vCluLocal;
+  varying float vCluS;
+  varying float vCluCrev;
+`;
+
+export function applyStemPatches(shader: PatchedShader, uniforms: ClusterUniforms): void {
+  Object.assign(shader.uniforms, uniforms);
+
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\n' + STEM_VERTEX_DECLS)
+    .replace('#include <project_vertex>', '#include <project_vertex>\n' + STEM_VERTEX_MAIN);
+
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>',
+      '#include <common>\n' + STEM_FRAGMENT_DECLS + GLSL_HELPERS)
+    .replace('#include <clipping_planes_fragment>',
+      '#include <clipping_planes_fragment>\n' + /* glsl */ `
+      float cluFade = 1.0 - smoothstep(uFadeS - 18.0, uFadeS, vCluS);
+      if (cluFade < 0.999 && chash12(gl_FragCoord.xy + vec2(31.7, 11.3)) > cluFade) discard;
+    `)
+    .replace('#include <color_fragment>',
+      '#include <color_fragment>\n' + /* glsl */ `
+      // Quiet rough shell: near the head it leans warm violet (alive), down the tail
+      // it settles to dark indigo. Crevices darken (baked occlusion).
+      float cluHead = 1.0 - smoothstep(2.0, 42.0, vCluS);
+      vec3 cluShell = mix(uMatrixCol, mix(uMatrixCol, uFamPurple, 0.32) * 2.4, cluHead);
+      cluShell *= 0.58 + 0.42 * (1.0 - vCluCrev);
+      cluShell *= 0.9 + 0.2 * cfbm3(vCluLocal * 0.8);
+      diffuseColor.rgb = cluShell;
+    `)
+    .replace('#include <roughnessmap_fragment>',
+      '#include <roughnessmap_fragment>\n' + /* glsl */ `
+      roughnessFactor = 0.62 + 0.18 * cnoise3(vCluLocal * 2.2) + 0.12 * vCluCrev;
+      roughnessFactor = clamp(roughnessFactor, 0.3, 0.95);
+    `)
+    .replace('#include <normal_fragment_maps>',
+      '#include <normal_fragment_maps>\n' + /* glsl */ `
+      {
+        vec3 cluJ = vec3(
+          cnoise3(vCluLocal * 3.1),
+          cnoise3(vCluLocal * 3.1 + 7.7),
+          cnoise3(vCluLocal * 3.1 + 13.3)) - 0.5;
+        normal = normalize(normal + cluJ * 0.10);
+      }
+    `)
+    .replace('#include <emissivemap_fragment>',
+      '#include <emissivemap_fragment>\n' + /* glsl */ `
+      {
+        // The ember band: finality burning through the shell from inside (the backlit
+        // amber zone of reference 3). Textured by veins so it reads as material.
+        float cluEmber = exp(-pow(vCluS - uEmberS, 2.0) / max(uEmberW * uEmberW, 1.0));
+        float cluVein = 0.45 + 0.55 * cfbm3(vCluLocal * 0.55 + vec3(0.0, uTime * 0.015, 0.0));
+        totalEmissiveRadiance += uEmberCol * cluEmber * cluVein * (0.30 + 0.10 * uBreath);
+        // Strike wave: a faint pulse of life racing down the shell.
+        float cluWS = uStrikeT * uWaveSpeed;
+        float cluWave = exp(-pow(vCluS - cluWS, 2.0) / 60.0) * exp(-uStrikeT * 2.1);
+        totalEmissiveRadiance += mix(uFamPurple, uCoreCol, 0.4) * cluWave * 0.10;
+        // Head zone: embedded druzy speckle — glitter as texture, pixel-scale points.
+        float cluHeadZ = 1.0 - smoothstep(2.0, 26.0, vCluS);
+        vec3 cluCell = floor(vCluLocal * 7.0);
+        float cluSel = step(0.86, chash13(cluCell + 5.0));
+        float cluTw = 0.5 + 0.5 * sin(uTime * 1.3 + chash13(cluCell) * 31.4);
+        totalEmissiveRadiance += mix(uFamPurple, uFamMagenta, chash13(cluCell + 9.0))
+          * cluSel * cluHeadZ * cluTw * 0.30;
+        totalEmissiveRadiance *= cluFade;
+      }
+    `);
+}
