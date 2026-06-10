@@ -3,11 +3,11 @@ import { MockSolanaData } from './data/MockData';
 import { LiveSolanaData } from './data/LiveData';
 import type { SolanaDataSource } from './data/DataSource';
 
-/** Provisional, diegetic loading copy. The Copy lane + coordinator supply final strings. */
+/** Diegetic loading copy (canonical: COPY.md). */
 const LOADING_COPY = {
-  connecting: 'Connecting to Solana…',
-  demo: 'Crystallizing demo data…',
-  fallback: 'Live feed unavailable — crystallizing demo…',
+  connecting: 'Reaching the Solana network…',
+  demo: 'Crystallizing a recent memory of the network…',
+  fallback: 'Can’t reach the network. Crystallizing a recent memory instead…',
 } as const;
 
 function hasWebGL(): boolean {
