@@ -144,6 +144,18 @@ export const crystalFragmentShader = /* glsl */ `
   void main() {
     vec3 N = normalize(vWorldNormal);
     vec3 V = normalize(cameraPosition - vWorldPos);
+
+    // --- Surface micro-relief: quartz growth striations (fine horizontal ridges across
+    // the prism faces) + granular unevenness. Perturbing the normal makes ALL downstream
+    // lighting (diffuse, spec, fresnel, reflection, dispersion) break up across the
+    // faces — texture the light responds to, not paint.
+    float striae = sin(vWorldY * 9.0 + vSeed * 17.0 + noise3(vWorldPos * 0.5) * 3.0);
+    vec3 grain = vec3(
+      noise3(vWorldPos * 1.9 + 3.1),
+      noise3(vWorldPos * 1.9 + 7.9),
+      noise3(vWorldPos * 1.9 + 13.4)) - 0.5;
+    N = normalize(N + vec3(0.0, striae * 0.05, 0.0) + grain * 0.11);
+
     float NdotV = dot(N, V);
     float fres = 1.0 - abs(NdotV);
 
@@ -169,8 +181,9 @@ export const crystalFragmentShader = /* glsl */ `
     vec3 Rr = refract(-V, N, 0.66); // IOR ~1.5 (quartz)
     vec3 drift = vec3(0.0, -uTime * 0.012, 0.0);
     float incl = fbm3(vWorldPos * 0.10 + drift + Rr * 2.0)
+               + fbm3(vWorldPos * 0.32 + drift * 1.5 + Rr * 5.0) * 0.55
                + fbm3(vWorldPos * 0.10 + drift + Rr * 6.0) * 0.6;
-    incl /= 1.6;
+    incl /= 2.15;
     float inclMask = smoothstep(0.35, 0.78, incl);
     vec3 inclYoung = vec3(0.45, 0.72, 1.0);
     vec3 inclOld   = vec3(0.20, 0.16, 0.28);
@@ -179,6 +192,21 @@ export const crystalFragmentShader = /* glsl */ `
     // Milky vertical veils (anisotropic: stretched along the growth axis), used to
     // texture the inner light so it reads as mineral, not fog.
     float veil = fbm3(vec3(vWorldPos.x * 0.14, vWorldPos.y * 0.05, vWorldPos.z * 0.14) + drift + Rr * 1.6);
+
+    // Ridged wisps — sharp internal filaments (the "lightning" veils real quartz carries),
+    // far crisper than the soft fbm haze.
+    float wisp = 1.0 - abs(2.0 * fbm3(vWorldPos * 0.5 + drift * 1.6 + Rr * 3.5) - 1.0);
+    wisp = pow(wisp, 4.0);
+
+    // Glitter — cell-hashed micro-facets that flash in and out as the view moves
+    // (the pixel-scale sparkle that says "crystalline" at any distance).
+    vec3 gCell = floor(vWorldPos * 2.4);
+    float gSel = step(0.62, hash13(gCell + 5.0));
+    // NaN-safe normalize: a near-zero hash vector would NaN (and NaN×0 is still NaN in
+    // GLSL — one such pixel entering the bloom mip chain smears into a dark blob).
+    vec3 gV = vec3(hash13(gCell + 11.1), hash13(gCell + 27.7), hash13(gCell + 43.3)) * 2.0 - 1.0;
+    vec3 gN = gV / max(length(gV), 0.05);
+    float glitter = pow(max(dot(reflect(-V, N), gN), 0.0), 36.0) * gSel;
 
     // --- Fake subsurface scattering: the tip light diffuses DOWN through the body.
     // Two falloffs (a hot near-tip core + a long soft tail), textured by the veils,
@@ -196,8 +224,13 @@ export const crystalFragmentShader = /* glsl */ `
 
     // --- Amber veil inclusions: golden mineral threads inside the violet body (the
     // validator-cloud gold, embedded in the gem). Strongest in the setting zone.
-    float amberMask = smoothstep(0.55, 0.85, fbm3(vWorldPos * 0.07 + vec3(3.7) + drift * 0.5 + Rr * 2.4));
-    vec3 amberCol = uInclusionColor * amberMask * (setF * 0.85 + finalF * 0.30) * (0.5 + 0.5 * veil);
+    float amberField = fbm3(vWorldPos * 0.07 + vec3(3.7) + drift * 0.5 + Rr * 2.4);
+    float amberMask = smoothstep(0.55, 0.85, amberField);
+    // Thread-like golden VEINS (ridged noise) on top of the soft amber wash — defined
+    // mineral seams rather than haze.
+    float amberVein = pow(1.0 - abs(2.0 * fbm3(vWorldPos * 0.16 + vec3(9.2) + drift * 0.7 + Rr * 2.0) - 1.0), 6.0);
+    vec3 amberCol = uInclusionColor * (amberMask * 0.6 + amberVein * 0.9)
+                  * (setF * 0.85 + finalF * 0.18) * (0.5 + 0.5 * veil);
 
     // --- Phantom growth layers: ghost outlines of EARLIER terminations preserved
     // inside the crystal (real phantom-quartz feature — and literally the strata story:
@@ -220,6 +253,7 @@ export const crystalFragmentShader = /* glsl */ `
     vec3 baseColor = uYoungColor * youngF + uSettingColor * setF + uFinalColor * finalF;
     baseColor *= (0.75 + 0.25 * strata);
     baseColor = mix(baseColor, baseColor * 0.5, (1.0 - seam) * (0.4 + 0.6 * finalF));
+    baseColor *= (0.93 + 0.07 * striae); // fine growth-line banding across the faces
     // Color zoning depth: looking face-on = looking deepest into the body, so the hue
     // saturates there (self-multiply deepens without brightening) — gem, not paint.
     baseColor = mix(baseColor, baseColor * baseColor * 2.4, (1.0 - fres) * 0.5);
@@ -233,8 +267,13 @@ export const crystalFragmentShader = /* glsl */ `
     vec3 L1 = normalize(vec3(0.45, 0.85, 0.30));   // key (upper)
     vec3 L2 = normalize(vec3(-0.65, 0.20, -0.55)); // cool rim/fill (opposite)
     float shin = mix(160.0, 34.0, vAge);           // young = sharp sparkle, old = soft
-    float s1 = pow(max(dot(N, normalize(L1 + V)), 0.0), shin);
-    float s2 = pow(max(dot(N, normalize(L2 + V)), 0.0), shin * 0.5);
+    // NaN-safe half-vectors: when the orbiting camera faces exactly opposite a light,
+    // L+V ≈ 0 and normalize() NaNs — the NaN hits the bloom blur and smears into a
+    // dark disc around the apex (the intermittent "dark circle" artifact).
+    vec3 H1 = L1 + V; H1 /= max(length(H1), 0.02);
+    vec3 H2 = L2 + V; H2 /= max(length(H2), 0.02);
+    float s1 = pow(max(dot(N, H1), 0.0), shin);
+    float s2 = pow(max(dot(N, H2), 0.0), shin * 0.5);
     float spec = (s1 + s2 * 0.45) * (0.5 + 0.9 * youngF + 0.3 * setF);
     float diff = max(dot(N, L1), 0.0) * 0.6 + max(dot(N, L2), 0.0) * 0.25 + 0.2;
 
@@ -265,7 +304,7 @@ export const crystalFragmentShader = /* glsl */ `
     }
 
     // --- Assemble ---
-    float emissive = youngF * 0.34 + setF * 0.16 + finalF * 0.05;
+    float emissive = youngF * 0.26 + setF * 0.16 + finalF * 0.05;
     float pulse = 1.0 + sin(uTime * 3.0 + vWorldY * 0.5) * 0.04 * youngF;
 
     // --- Crystallizing front: the newest material is still "forming" — a bright,
@@ -273,7 +312,7 @@ export const crystalFragmentShader = /* glsl */ `
     float front = smoothstep(0.085, 0.0, vAge);
     float frontShimmer = noise3(vWorldPos * vec3(0.9, 1.7, 0.9) + uTime * vec3(0.25, 0.6, 0.25));
     vec3 frontCol = mix(uCoreColor, uYoungColor, 0.4) * front
-                  * (0.25 + 0.45 * frontShimmer) * (1.0 + 1.0 * uTipPulse);
+                  * (0.18 + 0.38 * frontShimmer) * (1.0 + 1.0 * uTipPulse);
 
     vec3 col = baseColor * (diff * 0.5 + emissive) * breath * pulse;
     col += envCol * reflAmt;                                   // sweeping reflective sheen
@@ -281,9 +320,12 @@ export const crystalFragmentShader = /* glsl */ `
     vec3 rimCol = mix(mix(uYoungColor, vec3(0.55, 0.72, 1.0), 0.5),
                       vec3(0.42, 0.50, 0.78), finalF * 0.6);
     col += rimCol * rim * 0.6 * breath;
-    col += sssCol * (0.30 + 0.50 * clamp(youngF + setF, 0.0, 1.0)); // inner light, strongest in living zones
+    col += sssCol * (0.25 + 0.40 * clamp(youngF + setF, 0.0, 1.0)); // inner light, strongest in living zones
     col += amberCol;                                  // golden veins in the violet body
     col += phantomCol;                                // ghost terminations of past growth
+    col += mix(uYoungColor, uCoreColor, 0.5) * wisp
+         * (0.12 + 0.45 * youngF + 0.22 * setF) * (0.5 + 0.5 * veil); // lightning filaments
+    col += vec3(0.9, 0.95, 1.1) * glitter * (0.30 + 0.60 * (youngF + setF * 0.5)); // sparkle
     col += frontCol;                                  // the forming edge
     col += disp * 0.5;
     col += prism;
@@ -293,7 +335,12 @@ export const crystalFragmentShader = /* glsl */ `
     // add alpha so highlights stay crisp even on the translucent tip. ---
     float baseAlpha = youngF * 0.50 + setF * 0.78 + finalF * 0.96;
     float alpha = baseAlpha * pulse + spec * 0.7 + rim * 0.3 + flashA + reflAmt * 0.15
-                + sss * 0.10 + front * 0.14 + phantom * 0.10;
+                + sss * 0.10 + front * 0.14 + phantom * 0.10 + glitter * 0.25 + wisp * 0.05;
+
+    // Soft highlight compression — no view angle may flood a whole zone to white; the
+    // pixel-scale glints stay far above the bloom threshold, broad areas roll off.
+    float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+    col /= (1.0 + luma * 0.30);
 
     // Deep tail dissolve → a finite, elegant spire instead of an endless dark bar.
     float deepFade = 1.0 - smoothstep(uFinalityHeight * 1.4, uFinalityHeight * 2.6, distFromTop);

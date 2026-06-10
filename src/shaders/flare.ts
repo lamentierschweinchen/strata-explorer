@@ -53,7 +53,7 @@ export const flareFragmentShader = /* glsl */ `
     vec3 col = mix(uColor, hotWhite, core * 0.85 + spikes * 0.3);
     col = col * (core + glow * 0.5 + spikes * 0.7) + uColor * halo * 0.18;
 
-    col /= max(alpha, 0.001);
+    col /= max(alpha, 0.02); // bounded un-premultiply — keeps rim rgb finite for the bloom pass
     col *= vIntensity;
 
     gl_FragColor = vec4(col, clamp(alpha * vIntensity, 0.0, 1.0));
