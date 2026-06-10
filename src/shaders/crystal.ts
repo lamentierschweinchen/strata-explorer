@@ -98,6 +98,7 @@ export const crystalFragmentShader = /* glsl */ `
   uniform float uTime;
   uniform float uBreath;         // 0..1 idle dual-frequency breathing drive
   uniform float uTipPulse;       // 0..1 per-slot pulse — drives the body-wide inner light surge
+  uniform float uStrikeT;        // seconds since the last deposition strike (large = none)
   uniform float uSegmentHeight;  // world height of one strata layer
   uniform float uFinalityHeight;
   uniform float uTipTaperHeight; // taper-zone height (phantom ghost-termination spacing)
@@ -327,6 +328,12 @@ export const crystalFragmentShader = /* glsl */ `
          * (0.12 + 0.45 * youngF + 0.22 * setF) * (0.5 + 0.5 * veil); // lightning filaments
     col += vec3(0.9, 0.95, 1.1) * glitter * (0.30 + 0.60 * (youngF + setF * 0.5)); // sparkle
     col += frontCol;                                  // the forming edge
+
+    // Caustic strike ring — when the deposition packet lands, a ring of light runs DOWN
+    // the body from the apex: the block being absorbed into the record.
+    float ringY = uGrowthPointY - uStrikeT * 42.0;
+    float strikeRing = exp(-pow(vWorldY - ringY, 2.0) / 9.0) * exp(-uStrikeT * 2.4);
+    col += mix(uCoreColor, uYoungColor, 0.45) * strikeRing * 0.8 * (0.55 + 0.45 * veil);
     col += disp * 0.5;
     col += prism;
     col += flashCol;
@@ -335,7 +342,8 @@ export const crystalFragmentShader = /* glsl */ `
     // add alpha so highlights stay crisp even on the translucent tip. ---
     float baseAlpha = youngF * 0.50 + setF * 0.78 + finalF * 0.96;
     float alpha = baseAlpha * pulse + spec * 0.7 + rim * 0.3 + flashA + reflAmt * 0.15
-                + sss * 0.10 + front * 0.14 + phantom * 0.10 + glitter * 0.25 + wisp * 0.05;
+                + sss * 0.10 + front * 0.14 + phantom * 0.10 + glitter * 0.25 + wisp * 0.05
+                + strikeRing * 0.22;
 
     // Soft highlight compression — no view angle may flood a whole zone to white; the
     // pixel-scale glints stay far above the bloom threshold, broad areas roll off.

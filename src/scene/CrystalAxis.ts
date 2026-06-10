@@ -180,6 +180,7 @@ export class CrystalAxis {
         uSegmentHeight: { value: CONFIG.SEGMENT_HEIGHT },
         uBreath: { value: 0.5 },
         uTipPulse: { value: 0 },
+        uStrikeT: { value: 99 }, // seconds since last strike; starts "long ago"
         uApexOffset: { value: new THREE.Vector2(...CONFIG.CRYSTAL_APEX_OFFSET) },
         uBodyRadius: { value: CONFIG.CRYSTAL_RADIUS },
         uYoungColor: { value: COLORS.CRYSTAL_YOUNG.clone() },
@@ -263,9 +264,9 @@ export class CrystalAxis {
       this.seeds[vi] = seed;
     }
 
-    // Per-slot hero pulse: the tip flares and the light surges on a produced slot.
-    // Missed slots leave a dark gap and do NOT flare (visual honesty).
-    if (!missed) this.tipPulse = 1.0;
+    // NOTE: the hero pulse no longer fires here. The deposition packet travels the
+    // leader beam first; the orchestrator calls strike() when it lands, so the bloom
+    // happens at IMPACT. Missed slots leave a dark gap and never strike (honesty).
 
     // Advance ring buffer
     this.headIndex = (this.headIndex + 1) % this.maxSegments;
@@ -286,9 +287,22 @@ export class CrystalAxis {
     (this.geometry.getAttribute('aSeed') as THREE.BufferAttribute).needsUpdate = true;
   }
 
+  /**
+   * The deposition strike lands: the tip blooms (flare + light + body-wide SSS surge)
+   * and a caustic ring runs down the body. Called by the orchestrator when the leader
+   * beam's packet arrives — the visual moment a block is absorbed into the record.
+   */
+  strike(): void {
+    this.tipPulse = 1.0;
+    this.strikeT = 0;
+  }
+  private strikeT = 99;
+
   update(dt: number): void {
     this.material.uniforms.uTime.value += dt;
     this.flareMaterial.uniforms.uTime.value += dt;
+    this.strikeT += dt;
+    this.material.uniforms.uStrikeT.value = this.strikeT;
 
     // --- Dual-frequency idle breathing: brightness (uniform) + slight radius scale ---
     const t = this.material.uniforms.uTime.value;

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { beamVertexShader, beamFragmentShader } from '../shaders/beam';
+import { CONFIG } from '../utils/config';
 
 /**
  * Renders a glowing energy beam from the current leader validator
@@ -24,6 +25,12 @@ export class LeaderBeam {
   private targetOpacity = 0;
   private currentOpacity = 0;
   private beamWidth = 3.5;
+
+  // Deposition strike packet: travels leader→apex over pulseDur, then flags arrival
+  // exactly once (the orchestrator consumes it to trigger the crystal strike).
+  private pulseT = -1;
+  private pulseDur = 0.28;
+  private arrived = false;
 
   // Upcoming leader positions (up to 4)
   private upcomingLeaderPositions: THREE.Vector3[] = [];
@@ -50,6 +57,7 @@ export class LeaderBeam {
         uOpacity: { value: 0 },
         uColor: { value: new THREE.Color(1.0, 0.78, 0.31) }, // #ffc850
         uDashEnabled: { value: 1.0 },
+        uPulseT: { value: -1 },
       },
       transparent: true,
       depthWrite: false,
@@ -87,6 +95,7 @@ export class LeaderBeam {
         uOpacity: { value: 0.2 },
         uColor: { value: new THREE.Color(1.0, 0.78, 0.31) },
         uDashEnabled: { value: 0.0 },
+        uPulseT: { value: -1 }, // upcoming lines never carry the packet
       },
       transparent: true,
       depthWrite: false,
@@ -112,6 +121,22 @@ export class LeaderBeam {
     this.growthY = growthY;
   }
 
+  /** Launch the deposition packet from the leader toward the crystal apex. */
+  firePulse(durationSec = 0.28): void {
+    // Slot bursts (catch-up replays) can launch faster than packets land; let the
+    // in-flight packet strike NOW so no produced slot ever loses its impact moment.
+    if (this.pulseT >= 0) this.arrived = true;
+    this.pulseDur = Math.max(durationSec, 0.05);
+    this.pulseT = 0;
+  }
+
+  /** True exactly once when the packet reaches the apex (the strike moment). */
+  consumeArrival(): boolean {
+    const a = this.arrived;
+    this.arrived = false;
+    return a;
+  }
+
   /** Update beam geometry every frame. Camera needed for billboard alignment. */
   update(dt: number, growthY: number, camera: THREE.Camera): void {
     this.growthY = growthY;
@@ -123,8 +148,20 @@ export class LeaderBeam {
     this.currentOpacity += (this.targetOpacity - this.currentOpacity) * Math.min(fadeSpeed * dt, 1);
     this.beamMat.uniforms.uOpacity.value = this.currentOpacity;
 
-    // Compute billboard quad for main beam
-    const crystalTop = new THREE.Vector3(0, this.growthY, 0);
+    // Advance the deposition packet; flag arrival once when it reaches the apex.
+    if (this.pulseT >= 0) {
+      this.pulseT += dt / this.pulseDur;
+      if (this.pulseT >= 1) {
+        this.pulseT = -1;
+        this.arrived = true;
+      }
+    }
+    this.beamMat.uniforms.uPulseT.value = this.pulseT;
+
+    // Compute billboard quad for main beam — it lands on the crystal's ACTUAL apex
+    // (off-center, like the termination), so the strike hits where the glint lives.
+    const [apexX, apexZ] = CONFIG.CRYSTAL_APEX_OFFSET;
+    const crystalTop = new THREE.Vector3(apexX, this.growthY, apexZ);
     this.computeQuad(this.leaderPos, crystalTop, this.beamWidth, camera, this.beamPositions, 0);
     (this.beamGeo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
 

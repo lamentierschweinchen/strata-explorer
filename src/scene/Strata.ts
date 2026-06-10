@@ -168,23 +168,20 @@ export class Strata {
     // (paced) and defaults engine.onRealTransactions to the real handler below (feed + particle).
     this.dataSource.start(this.engine.intercept({
       onSlot: (slot, leader, missed) => {
-        // Crystal grows
+        // Crystal grows (the seismic wave + tip bloom now fire on packet ARRIVAL, below)
         this.crystalAxis.addSegment(missed);
-
-        // Seismic wave (only on non-missed slots)
-        if (!missed) {
-          this.seismicWave.spawn(this.crystalAxis.getGrowthPointY());
-        }
 
         // Leader spotlight
         this.validatorCloud.setLeader(leader);
         const upcoming = this.dataSource.getUpcomingLeaders(4);
         this.validatorCloud.setUpcomingLeaders(upcoming);
 
-        // Leader beam
+        // Leader beam + deposition strike: each produced slot, the leader fires a packet
+        // of light along its beam toward the apex (missed slots send nothing — honesty).
         const leaderIdx = this.dataSource.getCurrentLeaderIndex();
         const leaderPos = this.validatorCloud.getPosition(leaderIdx);
         this.leaderBeam.setLeader(leaderPos, this.crystalAxis.getGrowthPointY());
+        if (!missed) this.leaderBeam.firePulse();
 
         // Upcoming leader beams
         const upcomingIndices = this.dataSource.getUpcomingLeaderIndices(4);
@@ -256,6 +253,12 @@ export class Strata {
     this.validatorCloud.update(dt);
     this.seismicWave.update(dt);
     this.leaderBeam.update(dt, this.crystalAxis.getGrowthPointY(), this.camera);
+    // Deposition strike: when the packet lands on the apex the crystal blooms and the
+    // seismic wave ripples outward — the world reacts to the impact, not the schedule.
+    if (this.leaderBeam.consumeArrival()) {
+      this.crystalAxis.strike();
+      this.seismicWave.spawn(this.crystalAxis.getGrowthPointY());
+    }
     this.transactionPool.update(dt);
     this.background.update(dt);
     this.starfield.update(dt); // DESIGN LANE: twinkle the far star-shell
