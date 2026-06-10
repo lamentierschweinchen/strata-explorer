@@ -57,7 +57,7 @@ export const flareFragmentShader = /* glsl */ `
     float petals = pow(abs(cos(a6 * 3.0)), 28.0);
     float spikes = petals * exp(-dist * 3.2) * strike;
 
-    float alpha = core * 0.75 + mid * 0.40 * twinkle + halo * 0.16 * twinkle + spikes * 0.8;
+    float alpha = core * 0.55 + mid * 0.38 * twinkle + halo * 0.18 * twinkle + spikes * 0.8;
 
     vec3 hotWhite = vec3(1.0, 0.98, 0.94);
     // Accretion warms the light toward gold; idle rests icy.

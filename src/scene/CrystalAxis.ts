@@ -1,8 +1,9 @@
 import * as THREE from 'three';
+import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js';
 import {
   shardVertexShader, shardFragmentShader,
   nucleusVertexShader, nucleusFragmentShader,
-  spineVertexShader, spineFragmentShader,
+  ribbonVertexShader, ribbonFragmentShader,
 } from '../shaders/crystal';
 import { flareVertexShader, flareFragmentShader } from '../shaders/flare';
 import { CONFIG } from '../utils/config';
@@ -71,10 +72,14 @@ export class CrystalAxis {
   private tailMat: THREE.ShaderMaterial;
   private nucleus: THREE.Mesh;
   private nucleusMat: THREE.ShaderMaterial;
-  private spine: THREE.Mesh;
-  private spineMat: THREE.ShaderMaterial;
+  private ribbons: THREE.Mesh[] = [];
+  private ribbonMats: THREE.ShaderMaterial[] = [];
   private coma: THREE.Points;
   private comaMat: THREE.ShaderMaterial;
+  // Screen-space refraction: the scene (minus the gem) grabbed each frame.
+  private grabRT: THREE.WebGLRenderTarget | null = null;
+  private grabbing = false;
+  private grabSize = new THREE.Vector2();
 
   private readonly maxSegments = CONFIG.MAX_SEGMENTS;
   private headProgress = 0;   // segments added (absolute)
@@ -251,7 +256,7 @@ export class CrystalAxis {
     this.mesh.frustumCulled = false;
     this.mesh.position.set(0, CONFIG.COMET_NUCLEUS_Y, 0); // nucleus = local origin
 
-    // ================= Nucleus: heart gem + crystal points =========================
+    // ================= Nucleus: a refractive cut gem ================================
     const nucleusGeo = this.buildNucleusGeometry();
     this.nucleusMat = new THREE.ShaderMaterial({
       vertexShader: nucleusVertexShader,
@@ -260,7 +265,10 @@ export class CrystalAxis {
         uTime: { value: 0 },
         uBreath: { value: 0.5 },
         uTipPulse: { value: 0 },
-        uNucleusRadius: { value: CONFIG.NUCLEUS_GEM_RADIUS * 1.8 },
+        uNucleusRadius: { value: CONFIG.NUCLEUS_GEM_RADIUS * 1.6 },
+        uGrabTex: { value: null },
+        uGrabRes: { value: new THREE.Vector2(1, 1) },
+        uRefractK: { value: 1.15 },
         uYoungColor: { value: COLORS.CRYSTAL_YOUNG.clone() },
         uSettingColor: { value: COLORS.CRYSTAL_SETTING.clone() },
         uCoreColor: { value: COLORS.CRYSTAL_CORE.clone() },
@@ -275,36 +283,98 @@ export class CrystalAxis {
     this.nucleus.name = 'comet-nucleus';
     this.nucleus.frustumCulled = false;
     this.mesh.add(this.nucleus);
-    // Tumble about the tail-start tangent so the cluster's points (built clear of
-    // the tail cone) never sweep through the stream.
     this.tumbleAxis.set(this.curveT[0], this.curveT[1], this.curveT[2]).normalize();
 
-    // ================= Spine: soft glow along the living tail ======================
-    const spineGeo = this.buildSpineGeometry();
-    this.spineMat = new THREE.ShaderMaterial({
-      vertexShader: spineVertexShader,
-      fragmentShader: spineFragmentShader,
-      uniforms: {
-        uTime: { value: 0 },
-        uBreath: { value: 0.5 },
-        uTipPulse: { value: 0 },
-        uStrikeT: { value: 99 },
-        uWaveSpeed: { value: CONFIG.COMET_WAVE_SPEED },
-        uHistoryS: { value: 0 },
-        uSettleS: { value: CONFIG.COMET_TAIL_START + CONFIG.FINALITY_DEPTH * CONFIG.COMET_TAIL_SPACING },
-        uYoungColor: { value: COLORS.CRYSTAL_YOUNG.clone() },
-        uSettingColor: { value: COLORS.CRYSTAL_SETTING.clone() },
-        uCoreColor: { value: COLORS.CRYSTAL_CORE.clone() },
-      },
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.FrontSide,
-    });
-    this.spine = new THREE.Mesh(spineGeo, this.spineMat);
-    this.spine.name = 'comet-spine';
-    this.spine.frustumCulled = false;
-    this.mesh.add(this.spine);
+    // Grab pass (three's Reflector pattern): before the gem renders, render the
+    // scene WITHOUT it into a half-res target the gem's shader refracts. Nested
+    // renders inside onBeforeRender are the sanctioned approach (Reflector ships
+    // on it); the `grabbing` flag prevents recursion, and hiding the gem prevents
+    // its own onBeforeRender from re-firing inside the nested render.
+    this.nucleus.onBeforeRender = (renderer, scene, camera) => {
+      if (this.grabbing) return;
+      this.grabbing = true;
+
+      renderer.getDrawingBufferSize(this.grabSize);
+      const gw = Math.max(2, Math.floor(this.grabSize.x / 2));
+      const gh = Math.max(2, Math.floor(this.grabSize.y / 2));
+      if (!this.grabRT || this.grabRT.width !== gw || this.grabRT.height !== gh) {
+        this.grabRT?.dispose();
+        this.grabRT = new THREE.WebGLRenderTarget(gw, gh, {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          depthBuffer: true,
+        });
+      }
+
+      const prevRT = renderer.getRenderTarget();
+      const prevXr = renderer.xr.enabled;
+      const prevShadow = renderer.shadowMap.autoUpdate;
+      const prevAutoClear = renderer.autoClear;
+      renderer.xr.enabled = false;
+      renderer.shadowMap.autoUpdate = false;
+      renderer.autoClear = true;
+
+      // Hide the gem AND its own halo: refracting your own glow reads as milk.
+      this.nucleus.visible = false;
+      const comaWasVisible = this.coma.visible;
+      this.coma.visible = false;
+      renderer.setRenderTarget(this.grabRT);
+      renderer.render(scene, camera);
+      this.nucleus.visible = true;
+      this.coma.visible = comaWasVisible;
+
+      renderer.xr.enabled = prevXr;
+      renderer.shadowMap.autoUpdate = prevShadow;
+      renderer.autoClear = prevAutoClear;
+      renderer.setRenderTarget(prevRT);
+
+      this.nucleusMat.uniforms.uGrabTex.value = this.grabRT.texture;
+      (this.nucleusMat.uniforms.uGrabRes.value as THREE.Vector2).copy(this.grabSize);
+      this.grabbing = false;
+    };
+
+    // ================= Tail body: layered ribbon volumes ===========================
+    // Three camera-facing light layers along the curve: a bright core sheet and two
+    // offset streamers. They carry the comet-tail read; shards carry the data.
+    const layers = [
+      { phi: 0.0, r0: 0.0, width: 7.5, intensity: 0.62, flow: 7.0, seed: 0.13 },
+      { phi: 2.1, r0: 1.5, width: 4.6, intensity: 0.30, flow: 9.5, seed: 0.57 },
+      { phi: 4.4, r0: 1.2, width: 3.4, intensity: 0.22, flow: 5.5, seed: 0.91 },
+    ];
+    for (const L of layers) {
+      const geo = this.buildRibbonGeometry(L.phi, L.r0);
+      const mat = new THREE.ShaderMaterial({
+        vertexShader: ribbonVertexShader,
+        fragmentShader: ribbonFragmentShader,
+        uniforms: {
+          uTime: { value: 0 },
+          uBreath: { value: 0.5 },
+          uTipPulse: { value: 0 },
+          uStrikeT: { value: 99 },
+          uWaveSpeed: { value: CONFIG.COMET_WAVE_SPEED },
+          uHistoryS: { value: 0 },
+          uSettleS: { value: CONFIG.COMET_TAIL_START + CONFIG.FINALITY_DEPTH * CONFIG.COMET_TAIL_SPACING },
+          uWidth: { value: L.width },
+          uIntensity: { value: L.intensity },
+          uFlow: { value: L.flow },
+          uSeed: { value: L.seed },
+          uFadeS: { value: CONFIG.COMET_FADE_S },
+          uYoungColor: { value: COLORS.CRYSTAL_YOUNG.clone() },
+          uSettingColor: { value: COLORS.CRYSTAL_SETTING.clone() },
+          uCoreColor: { value: COLORS.CRYSTAL_CORE.clone() },
+        },
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      });
+      const m = new THREE.Mesh(geo, mat);
+      m.name = 'comet-ribbon';
+      m.frustumCulled = false;
+      this.mesh.add(m);
+      this.ribbons.push(m);
+      this.ribbonMats.push(mat);
+    }
 
     // ================= Light + coma ================================================
     this.tipLight = new THREE.PointLight(
@@ -398,8 +468,9 @@ export class CrystalAxis {
       : birth * 2.39996 + (rng() - 0.5) * 0.9;
     this.shardJitterMag[ring] = (0.5 + 1.3 * rng()) * (missed ? 1.6 : 1.0);
 
-    const len = 2.6 + 1.8 * rng();
-    const wid = (0.65 + 0.6 * rng()) * (missed ? 0.62 : 1.0);
+    // Slim ice needles: long and blade-like, embedded as glints in the tail light.
+    const len = 3.2 + 2.3 * rng();
+    const wid = (0.30 + 0.25 * rng()) * (missed ? 0.75 : 1.0);
     const waistY = (rng() - 0.5) * 0.3 * len;
     const topY = len * 0.5;
     const botY = -len * 0.5;
@@ -492,140 +563,92 @@ export class CrystalAxis {
     uvAttr.needsUpdate = true;
   }
 
-  /** Central heart gem (displaced icosahedron) + crystal points, merged. */
+  /**
+   * The nucleus: ONE elongated, many-faceted gem — a convex hull over a seeded,
+   * anisotropic point cloud, so the facets are large, irregular and *cut*-looking
+   * (no icosahedron tells, no spike primitives). Elongated along the tail-start
+   * tangent: the silhouette continues the stream's motion axis, prow forward.
+   */
   private buildNucleusGeometry(): THREE.BufferGeometry {
-    const rng = CrystalAxis.mulberry32(0xc0ffee);
+    const rng = CrystalAxis.mulberry32(0xbeef01);
     const R = CONFIG.NUCLEUS_GEM_RADIUS;
 
-    // Heart gem: flat-faceted displaced icosahedron. Displacement is hashed from
-    // the (rounded) vertex position so shared corners stay welded.
-    // (IcosahedronGeometry is already non-indexed — duplicated verts per face.)
-    const gem = new THREE.IcosahedronGeometry(R, 1);
-    {
-      const p = gem.getAttribute('position') as THREE.BufferAttribute;
+    // Seeded point cloud on an elongated ellipsoid → large irregular hull facets.
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i < 26; i++) {
       const v = new THREE.Vector3();
-      for (let i = 0; i < p.count; i++) {
-        v.fromBufferAttribute(p, i);
-        const key = Math.abs(Math.sin(
-          Math.round(v.x * 7.13) * 12.9898 +
-          Math.round(v.y * 7.13) * 78.233 +
-          Math.round(v.z * 7.13) * 37.719,
-        ) * 43758.5453);
-        const disp = 1 + ((key % 1) - 0.5) * 0.34;
-        v.multiplyScalar(disp);
-        p.setXYZ(i, v.x, v.y, v.z);
-      }
-      gem.computeVertexNormals(); // non-indexed → true flat facet normals
+      do {
+        v.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1);
+      } while (v.lengthSq() < 0.04);
+      v.normalize().multiplyScalar(R * (0.80 + 0.42 * rng()));
+      v.x *= 1.0;
+      v.y *= 1.52; // long axis
+      v.z *= 0.84;
+      pts.push(v);
     }
+    // Two deliberate apex points so the long axis terminates in real culet/crown
+    // tips instead of a chopped-off hull.
+    pts.push(new THREE.Vector3(0.6, R * 1.78, -0.4));
+    pts.push(new THREE.Vector3(-0.8, -R * 1.62, 0.5));
 
-    // Crystal points: elongated bipyramids jutting from the heart. Directions are
-    // kept out of a cone around the tail-start tangent so the stream stays clear,
-    // and the longest point reaches "forward" (away from the tail) — the comet has
-    // a direction of travel.
+    const hull = new ConvexGeometry(pts); // non-indexed, flat facet normals
+
+    // Orient the long axis along the comet's motion axis (prow away from the tail).
     const tailDir = new THREE.Vector3(6, -40, -4).normalize();
-    const positions: number[] = [];
-    const normals: number[] = [];
-    const pushGeom = (g: THREE.BufferGeometry, m: THREE.Matrix4) => {
-      const p = g.getAttribute('position') as THREE.BufferAttribute;
-      const nA = g.getAttribute('normal') as THREE.BufferAttribute;
-      const v = new THREE.Vector3();
-      for (let i = 0; i < p.count; i++) {
-        v.fromBufferAttribute(p, i).applyMatrix4(m);
-        positions.push(v.x, v.y, v.z);
-        v.fromBufferAttribute(nA, i).transformDirection(m);
-        normals.push(v.x, v.y, v.z);
-      }
-    };
-    pushGeom(gem, new THREE.Matrix4());
-
-    const up = new THREE.Vector3(0, 1, 0);
-    const q = new THREE.Quaternion();
-    for (let i = 0; i < CONFIG.NUCLEUS_POINT_COUNT; i++) {
-      // Direction: first point is the long "prow" away from the tail; the rest are
-      // seeded, re-rolled out of the tail cone.
-      let dir = new THREE.Vector3();
-      if (i === 0) {
-        dir.copy(tailDir).negate().add(new THREE.Vector3(0.15, 0.1, 0.2)).normalize();
-      } else {
-        do {
-          dir.set(rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1);
-        } while (dir.lengthSq() < 0.05 || dir.clone().normalize().dot(tailDir) > 0.72);
-        dir.normalize();
-      }
-      const len = i === 0 ? R * 2.3 : R * (1.1 + 1.1 * rng());
-      const wid = R * (0.22 + 0.14 * rng());
-
-      // A point is a stretched octahedron-ish bipyramid (cheap cone pair)
-      const pt = new THREE.CylinderGeometry(0, wid, len * 0.62, 5, 1, false).toNonIndexed();
-      pt.translate(0, len * 0.31, 0);
-      const ptBase = new THREE.CylinderGeometry(wid, 0, len * 0.38, 5, 1, false).toNonIndexed();
-      ptBase.translate(0, -len * 0.19, 0);
-      pt.computeVertexNormals();
-      ptBase.computeVertexNormals();
-
-      q.setFromUnitVectors(up, dir);
-      const m = new THREE.Matrix4()
-        .makeRotationFromQuaternion(q)
-        .setPosition(dir.clone().multiplyScalar(R * 0.45));
-      // Roll the point about its own axis for facet variety
-      const roll = new THREE.Matrix4().makeRotationAxis(dir, rng() * Math.PI * 2);
-      m.premultiply(roll);
-      pushGeom(pt, m);
-      pushGeom(ptBase, m);
-      pt.dispose();
-      ptBase.dispose();
-    }
-    gem.dispose();
-
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
-    geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
-    return geo;
+    const q = new THREE.Quaternion().setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      tailDir.clone().negate(),
+    );
+    hull.applyQuaternion(q);
+    return hull;
   }
 
-  /** Soft glow tube along the tail curve (static; shader fades it with history). */
-  private buildSpineGeometry(): THREE.BufferGeometry {
-    const RINGS = 72;
-    const SIDES = 10;
-    const s0 = 6;
-    const s1 = CONFIG.COMET_FADE_S + 6;
+  /**
+   * One tail ribbon: a strip of rings along the curve whose centerline is offset
+   * by (cos φ·N + sin φ·B)·r(s) — r grows with s so the streamers fan apart. The
+   * vertex shader billboards each ring toward the camera (cosmetic only; ribbons
+   * are never raycast).
+   */
+  private buildRibbonGeometry(phi: number, r0: number): THREE.BufferGeometry {
+    const RINGS = 96;
+    const s0 = 2;
+    const s1 = CONFIG.COMET_FADE_S + 8;
     const p = new THREE.Vector3(), t = new THREE.Vector3();
     const n = new THREE.Vector3(), b = new THREE.Vector3();
-    const positions = new Float32Array(RINGS * SIDES * 3);
-    const normals = new Float32Array(RINGS * SIDES * 3);
-    const sArr = new Float32Array(RINGS * SIDES);
+    const positions = new Float32Array(RINGS * 2 * 3);
+    const tangents = new Float32Array(RINGS * 2 * 3);
+    const sArr = new Float32Array(RINGS * 2);
+    const sideArr = new Float32Array(RINGS * 2);
     const indices: number[] = [];
     for (let r = 0; r < RINGS; r++) {
       const f = r / (RINGS - 1);
       const s = s0 + (s1 - s0) * f;
-      // Wide where it emerges from the cluster (no thin "neck"), tapering away.
-      const radius = THREE.MathUtils.lerp(4.4, 1.0, Math.pow(f, 0.7));
       this.frameAt(s, p, t, n, b);
-      for (let k = 0; k < SIDES; k++) {
-        const a = (k / SIDES) * Math.PI * 2;
-        const dir = new THREE.Vector3()
-          .addScaledVector(n, Math.cos(a))
-          .addScaledVector(b, Math.sin(a));
-        const idx = r * SIDES + k;
-        positions[idx * 3] = p.x + dir.x * radius;
-        positions[idx * 3 + 1] = p.y + dir.y * radius;
-        positions[idx * 3 + 2] = p.z + dir.z * radius;
-        normals[idx * 3] = dir.x;
-        normals[idx * 3 + 1] = dir.y;
-        normals[idx * 3 + 2] = dir.z;
+      const rOff = r0 * (0.3 + 1.7 * f); // streamers diverge down the tail
+      const ox = (n.x * Math.cos(phi) + b.x * Math.sin(phi)) * rOff;
+      const oy = (n.y * Math.cos(phi) + b.y * Math.sin(phi)) * rOff;
+      const oz = (n.z * Math.cos(phi) + b.z * Math.sin(phi)) * rOff;
+      for (let k = 0; k < 2; k++) {
+        const idx = r * 2 + k;
+        positions[idx * 3] = p.x + ox;
+        positions[idx * 3 + 1] = p.y + oy;
+        positions[idx * 3 + 2] = p.z + oz;
+        tangents[idx * 3] = t.x;
+        tangents[idx * 3 + 1] = t.y;
+        tangents[idx * 3 + 2] = t.z;
         sArr[idx] = s;
-        if (r < RINGS - 1) {
-          const k2 = (k + 1) % SIDES;
-          const a0 = r * SIDES + k, a1 = r * SIDES + k2;
-          const b0 = (r + 1) * SIDES + k, b1 = (r + 1) * SIDES + k2;
-          indices.push(a0, b0, a1, a1, b0, b1);
-        }
+        sideArr[idx] = k === 0 ? -1 : 1;
+      }
+      if (r < RINGS - 1) {
+        const a0 = r * 2;
+        indices.push(a0, a0 + 1, a0 + 2, a0 + 2, a0 + 1, a0 + 3);
       }
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geo.setAttribute('aTan', new THREE.BufferAttribute(tangents, 3));
     geo.setAttribute('aS', new THREE.BufferAttribute(sArr, 1));
+    geo.setAttribute('aSide', new THREE.BufferAttribute(sideArr, 1));
     geo.setIndex(indices);
     return geo;
   }
@@ -703,12 +726,15 @@ export class CrystalAxis {
     this.nucleusMat.uniforms.uTime.value = t;
     this.nucleusMat.uniforms.uBreath.value = breath01;
     this.nucleusMat.uniforms.uTipPulse.value = this.tipPulse;
-    this.spineMat.uniforms.uTime.value = t;
-    this.spineMat.uniforms.uBreath.value = breath01;
-    this.spineMat.uniforms.uTipPulse.value = this.tipPulse;
-    this.spineMat.uniforms.uStrikeT.value = this.strikeT;
-    this.spineMat.uniforms.uHistoryS.value =
+    const historyS =
       CONFIG.COMET_TAIL_START + Math.min(this.scrollPos, this.maxSegments) * CONFIG.COMET_TAIL_SPACING;
+    for (const rm of this.ribbonMats) {
+      rm.uniforms.uTime.value = t;
+      rm.uniforms.uBreath.value = breath01;
+      rm.uniforms.uTipPulse.value = this.tipPulse;
+      rm.uniforms.uStrikeT.value = this.strikeT;
+      rm.uniforms.uHistoryS.value = historyS;
+    }
     this.comaMat.uniforms.uTime.value = t;
 
     // Light + coma + cloud drive — same external semantics as the column era.
@@ -761,9 +787,10 @@ export class CrystalAxis {
       this.frameAt(sBase, P, T, N, B);
 
       // Braid offset: scattered while young, converging into the braid with
-      // finality. Missed cinders keep an enlarged offset — permanent flaws.
+      // finality. Kept inside the ribbon volume — the needles live IN the light.
+      // Missed cinders keep an enlarged offset — permanent flaws.
       const settle = age01 * age01 * (3 - 2 * age01); // smoothstep
-      const mag = this.shardJitterMag[ring] * (1.6 - 1.3 * settle);
+      const mag = this.shardJitterMag[ring] * (1.25 - 0.95 * settle);
       const th = this.shardJitterTheta[ring];
       let ox = (N.x * Math.cos(th) + B.x * Math.sin(th)) * mag;
       let oy = (N.y * Math.cos(th) + B.y * Math.sin(th)) * mag;
@@ -851,9 +878,10 @@ export class CrystalAxis {
     this.tailMat.dispose();
     this.nucleus.geometry.dispose();
     this.nucleusMat.dispose();
-    this.spine.geometry.dispose();
-    this.spineMat.dispose();
+    for (const r of this.ribbons) r.geometry.dispose();
+    for (const rm of this.ribbonMats) rm.dispose();
     this.coma.geometry.dispose();
     this.comaMat.dispose();
+    this.grabRT?.dispose();
   }
 }

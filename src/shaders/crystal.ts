@@ -1,31 +1,28 @@
 // Crystalline-comet shaders — three cooperating materials:
 //
-//   SHARD   — the tail stream: one small faceted bipyramid crystal per slot, strung
-//             along a curved path behind the nucleus. Young shards are icy, glowing
-//             and loosely scattered; with age (finality) they darken, align and fuse
-//             into a tight indigo braid that dissolves into space.
-//   NUCLEUS — the growth front: a tumbling crystal cluster suspended at the comet's
-//             head, lit from a hot heart. Carries the full "living amethyst" interior
-//             craft (inclusions, veils, amber veins, glitter) from the quartz era.
-//   SPINE   — a faint volumetric glow tube along the tail curve (the comet's ion
-//             tail): connective light that fades as the record settles.
+//   SHARD   — the tail stream data: one slim crystal needle per slot, embedded as
+//             glints inside the tail's light. Young = icy, luminous, scattered;
+//             settled = dark, aligned, fused into the braid.
+//   NUCLEUS — the growth front: a single elongated, many-faceted gem that REFRACTS
+//             the live scene behind it (screen-space grab pass + chromatic
+//             dispersion). Transparent like cut stone, not painted like a rock.
+//   RIBBON  — the tail's body: layered camera-facing volumes of flowing light
+//             along the tail curve (replaces the old thin spine tube). Carries the
+//             photographic comet-tail read; the shards carry the data.
 //
-// Geometry positioning is done on the CPU (CrystalAxis transforms shard vertices
-// every frame) so raycasts against the rendered mesh are exact — the vertex stages
-// here are pass-through + varyings only. All displacement lives in TypeScript.
+// Shard/ribbon positioning that affects raycasts stays CPU-side (see CrystalAxis);
+// ribbons billboard in the vertex stage (cosmetic only, never raycast).
 //
-// Hard-won craft rules (see git log of this file):
+// Hard-won craft rules (see git log):
 //  • GLSL compiles at runtime — verify in a real browser, console clean.
-//  • NaN discipline: guard every normalize()/divide that can degenerate. One NaN
-//    pixel enters the bloom mip chain and smears into a dark blob (shipped once).
-//  • Exposure discipline: bloom threshold is 0.72 — broad zones must stay below it
-//    (luma soft-compression at the end of every fragment); pixel-scale glints SHOULD
-//    cross it. Flooding a zone white also shipped once. Never again.
-//  • Texture bar: surfaces must hold up zoomed-in (striations, grain, glitter,
-//    interior parallax veils).
+//  • NaN discipline: guard EVERY normalize()/divide that can degenerate — including
+//    refract() at total internal reflection (returns vec3(0)).
+//  • Exposure discipline: bloom threshold is 0.72 — broad zones stay below it
+//    (luma soft-compression); pixel-scale glints and facet-edge wires may cross.
+//  • Texture bar: must hold up zoomed-in (striations, interior veils, dispersion).
 
 // ---------------------------------------------------------------------------------
-// Shared GLSL helpers (hash / value noise / fbm / safe normalize / luma compression)
+// Shared GLSL helpers
 // ---------------------------------------------------------------------------------
 const GLSL_COMMON = /* glsl */ `
   float hash13(vec3 p) {
@@ -57,13 +54,10 @@ const GLSL_COMMON = /* glsl */ `
     v += 0.125 * noise3(p * 4.01 + 9.7);
     return v;
   }
-  // NaN-safe normalize: degenerate vectors return a stable up instead of NaN.
   vec3 safeN(vec3 v) {
     float l = length(v);
     return l > 1e-4 ? v / l : vec3(0.0, 1.0, 0.0);
   }
-  // Soft highlight compression — broad areas roll off below the bloom threshold;
-  // pixel-scale glints (added AFTER compression where noted) stay free to bloom.
   vec3 compress(vec3 c, float k) {
     float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
     return c / (1.0 + luma * k);
@@ -71,19 +65,19 @@ const GLSL_COMMON = /* glsl */ `
 `;
 
 // ---------------------------------------------------------------------------------
-// SHARD — one crystal splinter per slot, CPU-positioned along the tail curve
+// SHARD — one crystal needle per slot, CPU-positioned along the tail curve
 // ---------------------------------------------------------------------------------
 export const shardVertexShader = /* glsl */ `
-  attribute float aGlow;   // strike ignition + cascade pulse (CPU-driven, decaying)
-  attribute float aMissed; // 1 = this slot was skipped → dark cinder, never ignites
-  attribute float aSeed;   // per-shard deterministic seed (re-rolled on ring reuse)
-  attribute float aAge;    // 0 at the head → 1 at finality depth (clamped)
-  attribute float aS;      // arc-length behind the nucleus (deep-tail dissolve)
+  attribute float aGlow;
+  attribute float aMissed;
+  attribute float aSeed;
+  attribute float aAge;
+  attribute float aS;
 
   varying vec3 vWorldNormal;
   varying vec3 vWorldPos;
-  varying vec3 vLocalPos;  // mesh-local: nucleus sits at the origin
-  varying vec2 vUv;        // x: around shard girth, y: along shard length
+  varying vec3 vLocalPos;
+  varying vec2 vUv;
   varying float vGlow;
   varying float vMissed;
   varying float vSeed;
@@ -101,7 +95,6 @@ export const shardVertexShader = /* glsl */ `
 
     vec4 wp = modelMatrix * vec4(position, 1.0);
     vWorldPos = wp.xyz;
-    // Comet transform is rotation+translation only, so mat3 is safe for normals.
     vWorldNormal = normalize(mat3(modelMatrix) * normal);
     gl_Position = projectionMatrix * viewMatrix * wp;
   }
@@ -121,9 +114,9 @@ export const shardFragmentShader = /* glsl */ `
   varying float vS;
 
   uniform float uTime;
-  uniform float uBreath;    // 0..1 idle breathing drive
-  uniform float uTipPulse;  // accretion bloom at the nucleus (decaying per strike)
-  uniform float uFadeS;     // arc-length where the settled tail dissolves
+  uniform float uBreath;
+  uniform float uTipPulse;
+  uniform float uFadeS;
   uniform vec3 uYoungColor;
   uniform vec3 uSettingColor;
   uniform vec3 uFinalColor;
@@ -135,22 +128,17 @@ export const shardFragmentShader = /* glsl */ `
     vec3 V = safeN(cameraPosition - vWorldPos);
     vec3 N = safeN(vWorldNormal);
 
-    // Micro-relief: growth striations across the splinter + mineral grain. High
-    // frequency (shards are ~2 units long) so they hold up at close zoom.
-    float striae = sin(vUv.y * 24.0 + vSeed * 31.0 + noise3(vLocalPos * 2.1) * 2.5);
-    vec3 grain = vec3(
-      noise3(vLocalPos * 5.2 + vSeed * 13.0),
-      noise3(vLocalPos * 5.2 + vSeed * 13.0 + 7.9),
-      noise3(vLocalPos * 5.2 + vSeed * 13.0 + 13.4)) - 0.5;
-    N = safeN(N + vec3(0.0, striae * 0.04, 0.0) + grain * 0.10);
+    // Fine growth striations along the needle; grain kept whisper-quiet — noisy
+    // normals read as dirt, clean facets read as ice.
+    float striae = sin(vUv.y * 30.0 + vSeed * 31.0 + noise3(vLocalPos * 2.1) * 2.0);
+    N = safeN(N + vec3(0.0, striae * 0.03, 0.0));
 
     float NdotV = dot(N, V);
     float fres = 1.0 - abs(NdotV);
 
-    // Deep-tail dissolve: the settled braid thins into space, a finite object.
     float deepFade = 1.0 - smoothstep(uFadeS - 22.0, uFadeS, vS);
 
-    // --- Missed slot: a cold cinder — fractured, lightless, permanent (honesty) ---
+    // --- Missed slot: a cold cinder — fractured, lightless, permanent ---
     if (vMissed > 0.5) {
       float crack = step(0.52, fbm3(vLocalPos * 3.4 + vSeed * 9.0));
       float rim = pow(fres, 3.5);
@@ -160,15 +148,14 @@ export const shardFragmentShader = /* glsl */ `
       return;
     }
 
-    // --- Finality zones along the tail ---
     float youngF = 1.0 - smoothstep(0.0, 0.30, vAge);
     float setF   = smoothstep(0.08, 0.40, vAge) * (1.0 - smoothstep(0.52, 0.86, vAge));
     float finalF = smoothstep(0.60, 1.0, vAge);
     float breath = 0.86 + 0.28 * uBreath;
 
-    // --- Interior seen through the facets: refracted-ray parallax inclusions.
-    // Young shards carry drifting icy sediment; settled ones freeze still and dim.
+    // Interior parallax inclusions through the facets (still drifting while young)
     vec3 Rr = refract(-V, N, 0.66);
+    if (dot(Rr, Rr) < 1e-6) Rr = reflect(-V, N); // TIR guard
     vec3 drift = vec3(0.0, -uTime * 0.02, 0.0) * (youngF + setF * 0.4);
     float incl = fbm3(vLocalPos * 0.9 + vSeed * 23.0 + drift + Rr * 1.6)
                + fbm3(vLocalPos * 2.3 + vSeed * 23.0 + drift * 1.5 + Rr * 3.4) * 0.5;
@@ -177,41 +164,35 @@ export const shardFragmentShader = /* glsl */ `
     vec3 inclusionCol = mix(vec3(0.16, 0.13, 0.24), vec3(0.45, 0.72, 1.0),
                             clamp(youngF + setF * 0.35, 0.0, 1.0)) * inclMask;
 
-    // --- Base mineral color by age, with per-shard value variation (the variation
-    // quiets as shards settle, so the far braid reads as one solid strand) ---
     vec3 baseColor = uYoungColor * youngF + uSettingColor * setF + uFinalColor * finalF;
     baseColor *= mix(0.82 + 0.36 * fract(vSeed * 7.31), 1.0, finalF * 0.6);
-    baseColor *= 0.93 + 0.07 * striae;
-    // Color-zoning depth: face-on views look deepest into the body → saturate.
+    baseColor *= 0.95 + 0.05 * striae;
     baseColor = mix(baseColor, baseColor * baseColor * 2.2, (1.0 - fres) * 0.45);
     baseColor += inclusionCol * (0.20 + 0.40 * youngF);
 
-    // --- Fixed world lights → glints sweep the facets as the comet sways/camera orbits
     vec3 L1 = normalize(vec3(0.45, 0.85, 0.30));
     vec3 L2 = normalize(vec3(-0.65, 0.20, -0.55));
-    float shin = mix(170.0, 36.0, vAge);
-    vec3 H1 = L1 + V; H1 /= max(length(H1), 0.02); // NaN guard (camera opposite light)
+    float shin = mix(190.0, 40.0, vAge);
+    vec3 H1 = L1 + V; H1 /= max(length(H1), 0.02);
     vec3 H2 = L2 + V; H2 /= max(length(H2), 0.02);
     float s1 = pow(max(dot(N, H1), 0.0), shin);
     float s2 = pow(max(dot(N, H2), 0.0), shin * 0.5);
     float spec = (s1 + s2 * 0.45) * (0.45 + 0.95 * youngF + 0.30 * setF);
     float diff = max(dot(N, L1), 0.0) * 0.55 + max(dot(N, L2), 0.0) * 0.25 + 0.2;
 
-    // Faked sky reflection — a moving polished sheen, cool above / dark below.
     vec3 Rref = reflect(-V, N);
     float sky = smoothstep(-0.35, 0.85, Rref.y);
     vec3 envCol = mix(vec3(0.04, 0.05, 0.10), vec3(0.55, 0.72, 1.05), sky);
     float reflAmt = (0.10 + 0.55 * pow(fres, 2.0)) * (0.30 + 0.60 * youngF + 0.25 * setF);
 
-    // Glitter — cell-hashed micro-facets, pixel-scale, free to cross the bloom bar.
+    // Pixel-scale glitter — the crystalline identity at every distance.
     vec3 gCell = floor(vLocalPos * 5.5 + vSeed * 31.0);
-    float gSel = step(0.66, hash13(gCell + 5.0));
+    float gSel = step(0.60, hash13(gCell + 5.0));
     vec3 gV = vec3(hash13(gCell + 11.1), hash13(gCell + 27.7), hash13(gCell + 43.3)) * 2.0 - 1.0;
-    vec3 gN = gV / max(length(gV), 0.05); // NaN-safe
-    float glitter = pow(max(dot(reflect(-V, N), gN), 0.0), 40.0) * gSel;
+    vec3 gN = gV / max(length(gV), 0.05);
+    float glitter = pow(max(dot(reflect(-V, N), gN), 0.0), 44.0) * gSel;
 
-    // --- Inner light from the nucleus: young shards glow from within, surging on
-    // each accretion strike. Distance measured in mesh-local space (nucleus = origin).
+    // Inner light from the nucleus; surges with each accretion.
     float nd = length(vLocalPos);
     float veil = fbm3(vLocalPos * 0.8 + vSeed * 5.0 + Rr * 1.2);
     float sss = exp(-max(nd - 10.0, 0.0) / 34.0)
@@ -219,29 +200,20 @@ export const shardFragmentShader = /* glsl */ `
               * (0.55 + 0.30 * uBreath + 1.30 * uTipPulse);
     vec3 sssCol = mix(uYoungColor, uCoreColor, 0.40) * sss;
 
-    // --- Accretion cascade: the strike pulse sweeps down the stream (CPU wave in
-    // aGlow) and each fresh shard ignites once when its block lands.
     vec3 glowCol = mix(uCoreColor, uYoungColor, 0.45) * vGlow;
 
-    // Chromatic dispersion + slow prismatic shimmer on living shards.
     vec3 disp = vec3(pow(fres, 2.4), pow(fres, 3.1), pow(fres, 4.2))
               * vec3(1.0, 0.85, 1.15) * (0.45 * youngF + 0.20 * setF);
-    float pAng = vSeed * 6.2831 + fres * 2.5 + uTime * 0.18;
-    vec3 prism = (0.5 + 0.5 * cos(6.2831 * (pAng + vec3(0.0, 0.33, 0.67))))
-               * pow(fres, 2.0) * (youngF * 0.40 + setF * 0.22) * 0.5;
 
-    // Rim keeps silhouettes alive — icy on the young, faint indigo on the settled.
     float rim = pow(fres, 2.2) * (youngF * 0.85 + setF * 0.45) + pow(fres, 3.5) * finalF * 0.8;
     vec3 rimCol = mix(mix(uYoungColor, vec3(0.55, 0.72, 1.0), 0.5),
                       vec3(0.30, 0.34, 0.58), finalF);
 
-    // Condensing front: the newest shard still forming — shimmer that cools off.
     float forming = smoothstep(0.05, 0.0, vAge);
     float formShimmer = noise3(vLocalPos * 2.4 + uTime * vec3(0.4, 0.9, 0.4));
     vec3 formCol = mix(uCoreColor, uYoungColor, 0.4) * forming
                  * (0.15 + 0.40 * formShimmer) * (1.0 + 1.2 * uTipPulse);
 
-    // --- Assemble ---
     float emissive = youngF * 0.55 + setF * 0.18 + finalF * 0.04;
     vec3 col = baseColor * (diff * 0.5 + emissive) * breath;
     col += envCol * reflAmt;
@@ -249,10 +221,9 @@ export const shardFragmentShader = /* glsl */ `
     col += rimCol * rim * 0.55 * breath;
     col += sssCol * (0.45 + 0.55 * clamp(youngF + setF, 0.0, 1.0));
     col += glowCol * 0.85;
-    col += disp * 0.5 + prism;
+    col += disp * 0.5;
     col += formCol;
 
-    // Broad-area exposure discipline, THEN the pixel-scale sparkle on top.
     col = compress(col, 0.30);
     col += vec3(0.9, 0.95, 1.1) * glitter * (0.30 + 0.60 * (youngF + setF * 0.5));
 
@@ -267,12 +238,12 @@ export const shardFragmentShader = /* glsl */ `
 `.replace('__COMMON__', GLSL_COMMON);
 
 // ---------------------------------------------------------------------------------
-// NUCLEUS — the tumbling crystal cluster at the head: the chain's present moment
+// NUCLEUS — a refractive cut gem: the scene bends through it (grab-pass texture)
 // ---------------------------------------------------------------------------------
 export const nucleusVertexShader = /* glsl */ `
   varying vec3 vWorldNormal;
   varying vec3 vWorldPos;
-  varying vec3 vLocalPos;    // cluster-local (tumble NOT applied — stable interior)
+  varying vec3 vLocalPos;
   varying vec3 vLocalNormal;
 
   void main() {
@@ -295,13 +266,16 @@ export const nucleusFragmentShader = /* glsl */ `
 
   uniform float uTime;
   uniform float uBreath;
-  uniform float uTipPulse;       // accretion: heart flare + warm tint + shimmer surge
-  uniform float uNucleusRadius;  // cluster envelope radius (heart-glow falloff)
+  uniform float uTipPulse;
+  uniform float uNucleusRadius;
+  uniform sampler2D uGrabTex;   // the live scene WITHOUT the gem (half-res)
+  uniform vec2 uGrabRes;        // full drawing-buffer size (for gl_FragCoord → UV)
+  uniform float uRefractK;      // screen-space refraction strength
   uniform vec3 uYoungColor;
   uniform vec3 uSettingColor;
   uniform vec3 uCoreColor;
-  uniform vec3 uInclusionColor;  // amber veins (validator gold embedded in the ice)
-  uniform vec3 uWarmColor;       // accretion warmth the bloom cools FROM
+  uniform vec3 uInclusionColor;
+  uniform vec3 uWarmColor;
 
   ${'__COMMON__'}
 
@@ -309,133 +283,153 @@ export const nucleusFragmentShader = /* glsl */ `
     vec3 V = safeN(cameraPosition - vWorldPos);
     vec3 N = safeN(vWorldNormal);
 
-    // Micro-relief: striations along each crystal point + mineral grain.
-    float striae = sin(vLocalPos.y * 3.2 + vLocalPos.x * 1.7 + noise3(vLocalPos * 0.8) * 4.0);
-    vec3 grain = vec3(
-      noise3(vLocalPos * 2.6 + 3.1),
-      noise3(vLocalPos * 2.6 + 7.9),
-      noise3(vLocalPos * 2.6 + 13.4)) - 0.5;
-    N = safeN(N + vec3(0.0, striae * 0.035, 0.0) + grain * 0.09);
+    // Whisper-quiet growth striations: enough to make the refraction waver like
+    // real ice, never enough to read as surface dirt.
+    float striae = sin(vLocalPos.y * 2.6 + noise3(vLocalPos * 0.7) * 3.0);
+    N = safeN(N + vec3(0.0, striae * 0.018, 0.0) );
 
     float NdotV = dot(N, V);
     float fres = 1.0 - abs(NdotV);
-
-    vec3 radial = safeN(vLocalPos);
     float rFrac = length(vLocalPos) / max(uNucleusRadius, 0.001);
-    // Crevices between cluster members face sideways from the radial direction —
-    // deepen them toward violet so the cluster reads as a grown aggregate.
-    float crevice = 1.0 - clamp(dot(safeN(vLocalNormal), radial), 0.0, 1.0);
 
-    // --- Interior: refracted parallax veils, drifting upward (alive), with sharp
-    // ridged wisps and amber veins — the "living amethyst" inheritance.
+    // ---------- TRANSMISSION: the world, bent through the stone ----------
+    // Refract per-channel (chromatic dispersion), project into screen space and
+    // sample the grab texture. TIR-guarded; offsets scale with apparent size so
+    // the bend is stable across zoom.
+    vec2 baseUV = gl_FragCoord.xy / uGrabRes;
+    float viewDist = max(distance(cameraPosition, vWorldPos), 1.0);
+    float offScale = uRefractK * uNucleusRadius / viewDist;
+
     vec3 Rr = refract(-V, N, 0.66);
-    vec3 drift = vec3(0.0, -uTime * 0.015, 0.0);
-    float veil = fbm3(vLocalPos * 0.16 + drift + Rr * 1.6);
-    float incl = fbm3(vLocalPos * 0.22 + drift + Rr * 2.2)
-               + fbm3(vLocalPos * 0.62 + drift * 1.5 + Rr * 4.6) * 0.55;
-    incl /= 1.55;
-    float inclMask = smoothstep(0.36, 0.76, incl);
-    float wisp = 1.0 - abs(2.0 * fbm3(vLocalPos * 0.85 + drift * 1.6 + Rr * 3.0) - 1.0);
-    wisp = pow(wisp, 4.0);
-    float amberVein = pow(1.0 - abs(2.0 * fbm3(vLocalPos * 0.30 + vec3(9.2) + drift * 0.7 + Rr * 1.8) - 1.0), 6.0);
-    float amberMask = smoothstep(0.55, 0.85, fbm3(vLocalPos * 0.13 + vec3(3.7) + Rr * 2.0));
+    if (dot(Rr, Rr) < 1e-6) Rr = reflect(-V, N);
+    vec3 Rg = refract(-V, N, 0.655);
+    if (dot(Rg, Rg) < 1e-6) Rg = Rr;
+    vec3 Rb = refract(-V, N, 0.645);
+    if (dot(Rb, Rb) < 1e-6) Rb = Rr;
 
-    // --- The heart: a hot core deep inside, breathing, FLARING on each accretion.
-    // Strongest where the view ray passes nearest the center (gem faces, not tips).
-    float heart = exp(-rFrac * 2.5) * (0.55 + 0.45 * veil);
-    float heartDrive = 0.45 + 0.22 * uBreath + 1.6 * uTipPulse;
+    vec2 oR = (mat3(viewMatrix) * Rr).xy * offScale;
+    vec2 oG = (mat3(viewMatrix) * Rg).xy * offScale;
+    vec2 oB = (mat3(viewMatrix) * Rb).xy * offScale;
+    vec3 grab;
+    grab.r = texture2D(uGrabTex, baseUV + oR).r;
+    grab.g = texture2D(uGrabTex, baseUV + oG).g;
+    grab.b = texture2D(uGrabTex, baseUV + oB).b;
 
-    // --- Base body: icy young crystal, violet in the crevices ---
-    vec3 baseColor = mix(uYoungColor, uSettingColor, clamp(crevice * 1.3, 0.0, 1.0) * 0.55);
-    baseColor *= 0.9 + 0.1 * striae;
-    baseColor = mix(baseColor, baseColor * baseColor * 2.3, (1.0 - fres) * 0.5);
-    baseColor += mix(vec3(0.16, 0.13, 0.24), vec3(0.45, 0.72, 1.0), 0.8) * inclMask * 0.35;
+    // Per-facet value variation — every cut face catches the world differently.
+    // Hashed from the FLAT local normal, so it is stable per facet and snaps at
+    // the edges (the jewel signature; smooth shading would kill it).
+    float facetKey = hash13(floor(safeN(vLocalNormal) * 6.5) + 3.0);
+    float facetTint = 0.80 + 0.40 * facetKey;
 
-    // --- Lighting: fixed key/rim; the tumble makes glints crawl at idle ---
+    // Absorption: looking deeper through the body tints toward glacial blue.
+    float depthLook = (1.0 - fres) * (0.45 + 0.55 * (1.0 - rFrac));
+    vec3 absorb = mix(vec3(1.0), vec3(0.66, 0.82, 1.12), clamp(depthLook, 0.0, 1.0));
+    float transmission = (1.0 - fres * 0.75);
+    vec3 col = grab * absorb * transmission * 1.15 * facetTint;
+
+    // ---------- INTERIOR: the stone is itself a light source ----------
+    vec3 driftv = vec3(0.0, -uTime * 0.012, 0.0);
+    float veil = fbm3(vLocalPos * 0.16 + driftv + Rr * 1.6);
+    float wisp = 1.0 - abs(2.0 * fbm3(vLocalPos * 0.55 + driftv * 1.6 + Rr * 2.6) - 1.0);
+    wisp = pow(wisp, 5.0);
+    float amberVein = pow(1.0 - abs(2.0 * fbm3(vLocalPos * 0.22 + vec3(9.2) + driftv * 0.7 + Rr * 1.8) - 1.0), 7.0);
+
+    // Cool body luminescence textured by the veils — transmission of empty space
+    // must never read as mud; the gem holds the chain's light.
+    col += mix(uSettingColor, uYoungColor, 0.65) * (0.045 + 0.075 * veil)
+         * (0.55 + 0.45 * (1.0 - fres)) * facetTint;
+
+    // The heart: a hot core deep inside, breathing, flaring on each accretion.
+    float heart = exp(-rFrac * 2.2) * (0.55 + 0.45 * veil);
+    float heartDrive = 0.55 + 0.22 * uBreath + 1.7 * uTipPulse;
+    col += uCoreColor * heart * heartDrive * 0.70;
+    // Gold lives near the heart only — kept faint so the body never turns muddy.
+    col += uInclusionColor * amberVein * (0.05 + 0.05 * veil) * (0.25 + 0.75 * heart);
+    col += mix(uYoungColor, uCoreColor, 0.5) * wisp * (0.10 + 0.30 * heart * heartDrive);
+
+    // ---------- SURFACE: reflection, facet wires, sparkle ----------
     vec3 L1 = normalize(vec3(0.45, 0.85, 0.30));
     vec3 L2 = normalize(vec3(-0.65, 0.20, -0.55));
     vec3 H1 = L1 + V; H1 /= max(length(H1), 0.02);
     vec3 H2 = L2 + V; H2 /= max(length(H2), 0.02);
-    float spec = pow(max(dot(N, H1), 0.0), 180.0) + pow(max(dot(N, H2), 0.0), 90.0) * 0.45;
-    float diff = max(dot(N, L1), 0.0) * 0.55 + max(dot(N, L2), 0.0) * 0.25 + 0.22;
+    float spec = pow(max(dot(N, H1), 0.0), 240.0) + pow(max(dot(N, H2), 0.0), 120.0) * 0.4;
 
     vec3 Rref = reflect(-V, N);
     float sky = smoothstep(-0.35, 0.85, Rref.y);
-    vec3 envCol = mix(vec3(0.04, 0.05, 0.10), vec3(0.55, 0.72, 1.05), sky);
-    float reflAmt = 0.07 + 0.34 * pow(fres, 2.0);
+    vec3 envCol = mix(vec3(0.03, 0.04, 0.08), vec3(0.50, 0.68, 1.02), sky);
+    col += envCol * (0.05 + 0.45 * pow(fres, 2.5));
 
-    // Glitter — accretion makes the surface shimmer crawl (cells re-hash with the
-    // pulse phase, gated so idle cells stay still: frost settling, not noise).
-    vec3 gCell = floor(vLocalPos * 2.4 + floor(uTipPulse * 5.0));
-    float gSel = step(0.60, hash13(gCell + 5.0));
-    vec3 gV = vec3(hash13(gCell + 11.1), hash13(gCell + 27.7), hash13(gCell + 43.3)) * 2.0 - 1.0;
-    vec3 gN = gV / max(length(gV), 0.05);
-    float glitter = pow(max(dot(reflect(-V, N), gN), 0.0), 36.0) * gSel * (1.0 + 1.6 * uTipPulse);
+    // Facet-edge wires: the signature of a cut stone. Flat-shaded normals jump at
+    // facet boundaries → fwidth spikes exactly one pixel wide there.
+    float ew = clamp(length(fwidth(normalize(vLocalNormal))) * 2.2, 0.0, 1.0);
+    ew = smoothstep(0.18, 0.9, ew);
 
-    // Dispersion + prismatic shimmer at grazing edges — gem fire (kept lean: broad
-    // rim sums must NOT cross the bloom bar; the cluster is silhouette-heavy).
-    vec3 disp = vec3(pow(fres, 2.4), pow(fres, 3.1), pow(fres, 4.2)) * vec3(1.0, 0.85, 1.15) * 0.30;
-    float pAng = atan(vLocalNormal.z, vLocalNormal.x) * 0.5 + fres * 2.5 + uTime * 0.20;
-    vec3 prism = (0.5 + 0.5 * cos(6.2831 * (pAng + vec3(0.0, 0.33, 0.67)))) * pow(fres, 2.0) * 0.22;
+    // Accretion warmth — absorbed gold, cooling back to ice.
+    col = mix(col, col * uWarmColor * 1.30, clamp(uTipPulse, 0.0, 1.0) * 0.28);
 
-    float rim = pow(fres, 2.2);
+    col = compress(col, 0.40);
 
-    // --- Assemble: cool body + hot heart + golden veins + sparkle ---
-    float breath = 0.86 + 0.28 * uBreath;
-    vec3 col = baseColor * (diff * 0.45 + 0.16) * breath;
-    col += envCol * reflAmt;
-    col += mix(vec3(0.8, 0.9, 1.05), uCoreColor, 0.5) * spec * 0.75;
-    col += mix(uYoungColor, vec3(0.55, 0.72, 1.0), 0.5) * rim * 0.30 * breath;
-    col += uCoreColor * heart * heartDrive * 0.60;
-    col += uInclusionColor * (amberMask * 0.35 + amberVein * 0.65) * (0.5 + 0.5 * veil) * (1.0 - heart * 0.5);
-    col += mix(uYoungColor, uCoreColor, 0.5) * wisp * (0.16 + 0.26 * heartDrive * heart);
-    col += disp + prism;
+    // Above the rolloff: glints that are allowed to bloom (pixel-scale only).
+    col += mix(vec3(0.85, 0.92, 1.1), uCoreColor, 0.5) * spec * 0.9;
+    col += vec3(0.85, 0.92, 1.10) * ew * (0.10 + 0.55 * fres + 0.35 * uTipPulse);
 
-    // Accretion warmth: the landing block's validator-gold soaks the cluster for a
-    // breath, then cools back to ice — absorbed, not reflected.
-    col = mix(col, col * uWarmColor * 1.35, clamp(uTipPulse, 0.0, 1.0) * 0.30);
-
-    col = compress(col, 0.45);
-    col += vec3(0.9, 0.95, 1.1) * glitter * 0.55; // sparkle rides above the rolloff
-
-    float alpha = 0.88 + rim * 0.10 + spec * 0.4 + heart * 0.10;
-    gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
+    gl_FragColor = vec4(col, 0.985);
   }
 `.replace('__COMMON__', GLSL_COMMON);
 
 // ---------------------------------------------------------------------------------
-// SPINE — soft glow tube along the tail curve (the ion tail / connective light)
+// RIBBON — layered camera-facing volumes of light along the tail curve
 // ---------------------------------------------------------------------------------
-export const spineVertexShader = /* glsl */ `
-  attribute float aS; // arc-length behind the nucleus, static per ring
+export const ribbonVertexShader = /* glsl */ `
+  attribute vec3 aTan;   // curve tangent at this ring (mesh-local)
+  attribute float aS;    // arc-length behind the nucleus
+  attribute float aSide; // -1 | +1 across the ribbon
 
-  varying vec3 vWorldNormal;
-  varying vec3 vWorldPos;
   varying float vS;
+  varying float vSide;
+  varying vec3 vWorldPos;
+
+  uniform float uWidth;      // base half-width at the head
+  uniform float uFadeS;
 
   void main() {
     vS = aS;
+    vSide = aSide;
+
     vec4 wp = modelMatrix * vec4(position, 1.0);
+    vec3 tw = normalize(mat3(modelMatrix) * aTan);
+    vec3 viewDir = wp.xyz - cameraPosition;
+    vec3 perp = cross(tw, viewDir);
+    float pl = length(perp);
+    perp = pl > 1e-4 ? perp / pl : vec3(0.0, 1.0, 0.0); // looking down the tail
+
+    // Width: emerges from inside the gem, swells just behind it, tapers long.
+    float head = smoothstep(0.0, 14.0, aS);
+    float w = uWidth * head * (0.34 + 0.66 * exp(-aS / 70.0));
+    wp.xyz += perp * w * aSide;
+
     vWorldPos = wp.xyz;
-    vWorldNormal = normalize(mat3(modelMatrix) * normal);
     gl_Position = projectionMatrix * viewMatrix * wp;
   }
 `;
 
-export const spineFragmentShader = /* glsl */ `
+export const ribbonFragmentShader = /* glsl */ `
   precision highp float;
 
-  varying vec3 vWorldNormal;
-  varying vec3 vWorldPos;
   varying float vS;
+  varying float vSide;
+  varying vec3 vWorldPos;
 
   uniform float uTime;
   uniform float uBreath;
   uniform float uTipPulse;
-  uniform float uStrikeT;    // seconds since the last accretion strike
-  uniform float uWaveSpeed;  // cascade speed down the tail (units/s)
-  uniform float uHistoryS;   // arc-length of existing history (no glow past the record)
-  uniform float uSettleS;    // arc-length over which the glow cools out (finality)
+  uniform float uStrikeT;
+  uniform float uWaveSpeed;
+  uniform float uHistoryS;
+  uniform float uSettleS;
+  uniform float uIntensity;  // per-layer brightness
+  uniform float uSeed;       // de-syncs layer noise
+  uniform float uFlow;       // filament drift speed
   uniform vec3 uYoungColor;
   uniform vec3 uSettingColor;
   uniform vec3 uCoreColor;
@@ -443,41 +437,38 @@ export const spineFragmentShader = /* glsl */ `
   ${'__COMMON__'}
 
   void main() {
-    vec3 V = safeN(cameraPosition - vWorldPos);
-    vec3 N = safeN(vWorldNormal);
-    // Inverse fresnel: bright looking through the tube's middle, soft at the limb —
-    // a cheap volumetric glow that works from every orbit angle (no billboarding,
-    // which matters because this update path has no camera reference).
-    float body = pow(abs(dot(N, V)), 1.6);
+    // Soft volume profile across the ribbon.
+    float across = 1.0 - vSide * vSide;
+    across = pow(max(across, 0.0), 1.9);
 
     float settle = clamp(vS / max(uSettleS, 0.001), 0.0, 1.0);
-    // Color settles faster than the light dies, so the violet mid-zone reads.
     float settleC = clamp(vS / max(uSettleS * 0.62, 0.001), 0.0, 1.0);
-    float glow = exp(-vS / 42.0) * 0.75 + (1.0 - settle) * 0.25;
 
-    // Flowing luminescence bleeding away from the nucleus — slow, aurora-like.
-    // (Low contrast: in a freeze-frame the bands must not read as machined ribs.)
-    float flow = fbm3(vec3(vS * 0.22 - uTime * 1.1, uTime * 0.07, 0.0));
-    flow = 0.72 + 0.28 * flow;
+    // Luminosity dies as the record settles; a faint ember floor lingers mid-tail.
+    float glow = exp(-vS / 38.0) * 0.80 + (1.0 - settle) * 0.20;
 
-    // Accretion cascade: a soft front of light racing down the tail each strike.
+    // Filamentary structure flowing away from the head — the streamers that make a
+    // comet tail read photographic instead of airbrushed.
+    float fil = fbm3(vec3(vS * 0.30 - uTime * uFlow, vSide * 1.9 + uSeed * 7.0, uSeed));
+    fil = 1.0 - abs(2.0 * fil - 1.0);
+    fil = pow(fil, 2.6);
+    float texAmt = 0.45 + 0.55 * fil;
+
+    // Accretion cascade racing down the tail.
     float ws = uStrikeT * uWaveSpeed;
     float wave = exp(-pow(vS - ws, 2.0) / 55.0) * exp(-uStrikeT * 1.9);
 
-    // The glow only exists where history exists, and breathes with the comet.
     float history = 1.0 - smoothstep(uHistoryS - 8.0, uHistoryS, vS);
-    float breath = 0.80 + 0.20 * uBreath;
-    float nearBoost = 1.0 + uTipPulse * 1.3 * exp(-vS / 18.0);
+    float breath = 0.84 + 0.16 * uBreath;
+    float nearBoost = 1.0 + uTipPulse * 1.2 * exp(-vS / 18.0);
 
-    // Additive blending multiplies col by alpha — keep col at full strength and
-    // let alpha carry the fades, or the glow double-attenuates to nothing.
-    vec3 col = mix(uYoungColor, uSettingColor, settleC) * 0.85;
-    col += uCoreColor * wave * 0.65;
+    vec3 col = mix(uYoungColor, uSettingColor, settleC) * 0.9;
+    col += uCoreColor * wave * 0.6;
     col = compress(col, 0.25);
 
-    float alpha = body * glow * flow * history * breath * nearBoost * 0.55
-                + wave * body * history * 0.25;
+    float alpha = across * glow * texAmt * history * breath * nearBoost * uIntensity
+                + wave * across * history * uIntensity * 0.30;
 
-    gl_FragColor = vec4(col, clamp(alpha, 0.0, 0.75));
+    gl_FragColor = vec4(col, clamp(alpha, 0.0, 0.8));
   }
 `.replace('__COMMON__', GLSL_COMMON);

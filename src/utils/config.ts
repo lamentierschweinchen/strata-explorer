@@ -19,9 +19,8 @@ export const CONFIG = {
   COMET_WAVE_SPEED: 30, // accretion pulse speed cascading down the tail (units/s)
   COMET_SWAY_YAW: 0.021, // rad/s — the whole comet slowly turns like a hanging mobile
   COMET_TUMBLE_SPEED: 0.07, // rad/s — nucleus self-rotation (facet glints sweep at idle)
-  NUCLEUS_GEM_RADIUS: 9.5, // central heart-gem radius (cluster points reach ~2.2×)
-  NUCLEUS_POINT_COUNT: 7, // crystal points jutting from the heart gem — few, long, varied
-  SHARD_SIDES: 6, // hexagonal cross-section of each tail shard (bipyramid)
+  NUCLEUS_GEM_RADIUS: 11, // gem hull base radius (elongated ~1.5× along the motion axis)
+  SHARD_SIDES: 4, // cross-section of each tail needle (slim blade-like bipyramid)
 
   // Timing
   SLOT_INTERVAL: 400, // ms
