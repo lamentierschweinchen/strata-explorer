@@ -68,6 +68,13 @@ export const CONFIG = {
   TIP_GLOW_SIGMA: 72, // radius (units) of the cloud illumination falloff from the tip
   CRYSTAL_BREATH_SCALE: 0.018, // ±1.8% idle radius breathing
 
+  // Epoch-rollover ceremony (a real, rare event — every ~2 days the leader schedule
+  // turns over): grand golden waves + a bloom swell + the HUD epoch glowing.
+  EPOCH_WAVE_COUNT: 3,
+  EPOCH_WAVE_STAGGER: 0.8, // seconds between ceremony waves
+  EPOCH_WAVE_LIFETIME: 4.0, // each grand wave rolls much longer than a slot wave
+  EPOCH_BLOOM_BOOST: 0.16, // added bloom strength at ceremony peak, decays over ~4s
+
   // Background color
   BG_COLOR: 0x05040a,
 } as const;

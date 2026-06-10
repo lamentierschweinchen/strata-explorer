@@ -38,6 +38,12 @@ async function startWith(dataSource: SolanaDataSource): Promise<void> {
   // Dev-only introspection handle (stripped from production builds).
   if (import.meta.env.DEV) (window as any).__strata = strata;
 
+  // Rehearsal hook: ?ceremony fires the epoch-rollover choreography once, ~5s after
+  // load — for previewing on any screen. The real one fires on actual epoch rollover.
+  if (new URLSearchParams(window.location.search).has('ceremony')) {
+    window.setTimeout(() => strata.triggerEpochCeremony(), 5000);
+  }
+
   let lastTime = performance.now();
   function loop(): void {
     requestAnimationFrame(loop);

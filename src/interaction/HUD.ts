@@ -114,6 +114,18 @@ export class HUD {
     this.epochEl.textContent = epoch.toLocaleString();
   }
 
+  /** Epoch rollover: the epoch number ignites gold, then breathes back to normal. */
+  epochCeremony(): void {
+    this.epochEl.style.transition = 'none';
+    this.epochEl.style.color = '#ffd27a';
+    this.epochEl.style.textShadow = '0 0 14px rgba(255, 200, 110, 0.85)';
+    window.setTimeout(() => {
+      this.epochEl.style.transition = 'color 3s ease, text-shadow 3s ease';
+      this.epochEl.style.color = 'rgba(255,255,255,0.7)';
+      this.epochEl.style.textShadow = 'none';
+    }, 1200);
+  }
+
   updateValidatorCount(count: number): void {
     this.validatorEl.textContent = count.toLocaleString();
   }

@@ -52,6 +52,9 @@ export class Strata {
   private currentTps = 0;
   private lastFilter = 'all';
 
+  // Epoch watch — a rollover (~every 2 days) triggers the ceremony
+  private lastEpoch = -1;
+
   static async create(container: HTMLElement, dataSource: SolanaDataSource): Promise<Strata> {
     await dataSource.initialize();
     return new Strata(container, dataSource);
@@ -203,6 +206,10 @@ export class Strata {
         this.hud.updateSlot(slot);
         const epochInfo = this.dataSource.getEpochInfo();
         this.hud.updateEpoch(epochInfo.epoch);
+
+        // Epoch rollover — a real, rare event: the leader schedule turns over.
+        if (this.lastEpoch >= 0 && epochInfo.epoch > this.lastEpoch) this.epochCeremony();
+        this.lastEpoch = epochInfo.epoch;
       },
 
       onValidatorsUpdated: (_validators) => {
@@ -226,6 +233,23 @@ export class Strata {
         // Finality is handled by CrystalAxis age computation
       },
     }));
+  }
+
+  /**
+   * Epoch-rollover ceremony (~every 2 days, real event): three grand golden waves roll
+   * across the field (lighting the validator cloud as they pass), the bloom swells and
+   * exhales, and the HUD epoch number ignites. Built entirely outside the crystal/beam
+   * modules so it composes with any centerpiece design.
+   */
+  private epochCeremony(): void {
+    this.seismicWave.spawnGrand(this.crystalAxis.getGrowthPointY());
+    this.postProcessing.pulseBloom(CONFIG.EPOCH_BLOOM_BOOST);
+    this.hud.epochCeremony();
+  }
+
+  /** Preview/rehearsal hook (?ceremony URL param): same choreography, on demand. */
+  triggerEpochCeremony(): void {
+    this.epochCeremony();
   }
 
   update(dt: number): void {

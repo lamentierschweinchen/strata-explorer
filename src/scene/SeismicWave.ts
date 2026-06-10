@@ -7,6 +7,9 @@ interface WaveSlot {
   origin: THREE.Vector3;
   birthTime: number;
   active: boolean;
+  /** Ceremony wave: golden, wider, longer-lived (epoch rollover). */
+  grand: boolean;
+  lifetime: number;
 }
 
 /**
@@ -20,9 +23,14 @@ export class SeismicWave {
   private waves: WaveSlot[] = [];
   private elapsedTime = 0;
 
+  // Staggered ceremony waves waiting to fire (delay seconds, origin Y)
+  private pendingGrand: { delay: number; y: number }[] = [];
+
   // Cached arrays for uniforms
   private origins: THREE.Vector3[] = [];
   private times: number[] = [];
+  private grands: number[] = [];
+  private lives: number[] = [];
 
   constructor() {
     // Initialize wave slots
@@ -31,9 +39,13 @@ export class SeismicWave {
         origin: new THREE.Vector3(),
         birthTime: -999,
         active: false,
+        grand: false,
+        lifetime: CONFIG.WAVE_LIFETIME,
       });
       this.origins.push(new THREE.Vector3());
       this.times.push(0);
+      this.grands.push(0);
+      this.lives.push(CONFIG.WAVE_LIFETIME);
     }
 
     // Flat disc large enough to cover the validator cloud
@@ -46,9 +58,10 @@ export class SeismicWave {
       uniforms: {
         uWaveOrigins: { value: this.origins },
         uWaveTimes: { value: this.times },
+        uWaveGrand: { value: this.grands },
+        uWaveLives: { value: this.lives },
         uWaveCount: { value: 0 },
         uWaveSpeed: { value: CONFIG.WAVE_SPEED },
-        uWaveLifetime: { value: CONFIG.WAVE_LIFETIME },
         uWaveRingWidth: { value: CONFIG.WAVE_RING_WIDTH },
         uWaveColor: { value: COLORS.WAVE_COLOR },
       },
@@ -62,8 +75,19 @@ export class SeismicWave {
     this.mesh.frustumCulled = false;
   }
 
+  /**
+   * Epoch-rollover ceremony: a sequence of grand golden waves (wider, longer-lived)
+   * rolling out from the crystal, staggered so the field swells in repeated breaths.
+   */
+  spawnGrand(y: number = 0): void {
+    this.spawn(y, true);
+    for (let i = 1; i < CONFIG.EPOCH_WAVE_COUNT; i++) {
+      this.pendingGrand.push({ delay: i * CONFIG.EPOCH_WAVE_STAGGER, y });
+    }
+  }
+
   /** Spawn a new seismic wave at the given origin (crystal axis) */
-  spawn(y: number = 0): void {
+  spawn(y: number = 0, grand = false): void {
     // Find the oldest or first inactive slot
     let oldest = 0;
     let oldestTime = Infinity;
@@ -86,23 +110,36 @@ export class SeismicWave {
     this.waves[oldest].origin.set(0, y, 0);
     this.waves[oldest].birthTime = this.elapsedTime;
     this.waves[oldest].active = true;
+    this.waves[oldest].grand = grand;
+    this.waves[oldest].lifetime = grand ? CONFIG.EPOCH_WAVE_LIFETIME : CONFIG.WAVE_LIFETIME;
   }
 
   update(dt: number): void {
     this.elapsedTime += dt;
+
+    // Fire staggered ceremony waves when their delay elapses
+    for (let i = this.pendingGrand.length - 1; i >= 0; i--) {
+      this.pendingGrand[i].delay -= dt;
+      if (this.pendingGrand[i].delay <= 0) {
+        this.spawn(this.pendingGrand[i].y, true);
+        this.pendingGrand.splice(i, 1);
+      }
+    }
 
     let activeCount = 0;
     for (let i = 0; i < this.waves.length; i++) {
       if (!this.waves[i].active) continue;
 
       const age = this.elapsedTime - this.waves[i].birthTime;
-      if (age > CONFIG.WAVE_LIFETIME) {
+      if (age > this.waves[i].lifetime) {
         this.waves[i].active = false;
         continue;
       }
 
       this.origins[activeCount].copy(this.waves[i].origin);
       this.times[activeCount] = age;
+      this.grands[activeCount] = this.waves[i].grand ? 1 : 0;
+      this.lives[activeCount] = this.waves[i].lifetime;
       activeCount++;
     }
 

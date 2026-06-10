@@ -18,6 +18,8 @@ export class PostProcessing {
   readonly composer: EffectComposer;
   private filmGrainPass: ShaderPass;
   private caPass: ShaderPass;
+  private bloomPass: UnrealBloomPass;
+  private bloomBoost = 0; // ceremony swell above the base strength, decays in update()
 
   constructor(
     renderer: THREE.WebGLRenderer,
@@ -33,13 +35,13 @@ export class PostProcessing {
     this.composer.addPass(renderPass);
 
     // Bloom
-    const bloomPass = new UnrealBloomPass(
+    this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(width, height),
       CONFIG.BLOOM_STRENGTH,
       CONFIG.BLOOM_RADIUS,
       CONFIG.BLOOM_THRESHOLD,
     );
-    this.composer.addPass(bloomPass);
+    this.composer.addPass(this.bloomPass);
 
     // Color grading
     const colorGradePass = new ShaderPass({
@@ -93,8 +95,19 @@ export class PostProcessing {
     this.composer.addPass(this.caPass);
   }
 
+  /** Ceremony swell: briefly lift bloom strength; it breathes back down over ~4s. */
+  pulseBloom(amount: number): void {
+    this.bloomBoost = Math.max(this.bloomBoost, amount);
+  }
+
   update(dt: number): void {
     this.filmGrainPass.uniforms.uTime.value += dt;
+
+    if (this.bloomBoost > 0.001) {
+      this.bloomBoost *= Math.exp(-dt * 0.9);
+      if (this.bloomBoost < 0.001) this.bloomBoost = 0;
+    }
+    this.bloomPass.strength = CONFIG.BLOOM_STRENGTH + this.bloomBoost;
   }
 
   render(): void {
