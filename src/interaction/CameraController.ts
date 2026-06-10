@@ -23,20 +23,25 @@ export class CameraController {
   private zoomStartTarget = new THREE.Vector3();
   private zoomEndTarget = new THREE.Vector3();
 
+  // Idle framing target — eased toward the cluster's live bright centroid each frame
+  // (fed by the orchestrator via setFramingTarget). Replaces the old hardcoded look-at
+  // so the dense, ember-lit mass sits centered instead of the empty air above it.
+  private framingTarget = new THREE.Vector3(0, CONFIG.CAMERA_TARGET_Y, 0);
+
   constructor(camera: THREE.PerspectiveCamera, domElement: HTMLCanvasElement) {
     this.camera = camera;
 
     // Initial position: slightly angled side view, crystal growth point centered
     const r = CONFIG.ORBIT_RADIUS;
-    camera.position.set(r * 0.8, 50, r * 0.5);
-    camera.lookAt(0, 15, 0);
+    camera.position.set(r * 0.8, CONFIG.ORBIT_HEIGHT_Y, r * 0.5);
+    camera.lookAt(0, CONFIG.CAMERA_TARGET_Y, 0);
 
     this.controls = new OrbitControls(camera, domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.05;
     this.controls.minDistance = CONFIG.ZOOM_MIN;
     this.controls.maxDistance = CONFIG.ZOOM_MAX;
-    this.controls.target.set(0, 15, 0); // Look at crystal mid-point
+    this.controls.target.set(0, CONFIG.CAMERA_TARGET_Y, 0); // initial; eased onto the live centroid in update()
     this.controls.enablePan = false;
 
     // Stop auto-orbit on user interaction
@@ -87,6 +92,15 @@ export class CameraController {
     this.zoomEndPos.copy(validatorPos).add(dir);
   }
 
+  /**
+   * Orchestrator feeds the cluster's live bright centroid each frame; the idle orbit
+   * eases its look-at onto it so the ember-lit mass stays framed as the reef grows and
+   * sways. Ignored while the user is driving (autoOrbit off) so it never fights them.
+   */
+  setFramingTarget(p: THREE.Vector3): void {
+    this.framingTarget.copy(p);
+  }
+
   update(dt: number): void {
     if (this.zooming) {
       this.zoomElapsed += dt;
@@ -109,10 +123,12 @@ export class CameraController {
     if (this.autoOrbit) {
       this.orbitAngle += CONFIG.AUTO_ORBIT_SPEED * dt;
       const r = CONFIG.ORBIT_RADIUS;
-      this.camera.position.x = Math.cos(this.orbitAngle) * r;
-      this.camera.position.z = Math.sin(this.orbitAngle) * r;
-      // Gentle vertical oscillation
-      this.camera.position.y = 45 + Math.sin(this.orbitAngle * 0.3) * 15;
+      // Ease the look-at onto the live cluster centroid, and orbit AROUND it (xz), so the
+      // dense ember mass stays centered instead of falling to the bottom edge.
+      this.controls.target.lerp(this.framingTarget, Math.min(dt * 1.2, 1));
+      this.camera.position.x = this.controls.target.x + Math.cos(this.orbitAngle) * r;
+      this.camera.position.z = this.controls.target.z + Math.sin(this.orbitAngle) * r;
+      this.camera.position.y = CONFIG.ORBIT_HEIGHT_Y + Math.sin(this.orbitAngle * 0.3) * CONFIG.ORBIT_HEIGHT_DRIFT;
     }
 
     this.controls.update();
