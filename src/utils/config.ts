@@ -14,21 +14,21 @@ export const CONFIG = {
   // space. This block replaces the comet constants (same spine/heartbeat machinery).
   MAX_SEGMENTS: 200,
   FINALITY_DEPTH: 30, // slots behind the head that are "crystallizing" (≈ Solana rooting depth)
-  CLUSTER_HEAD_Y: 32, // world Y of the growth front — places the reef's BRIGHT mass (head→ember) around the camera target plane (y≈15) so the idle frame holds it centered
-  CLUSTER_SPACING: 1.25, // arc-length the reef glides per slot — tight: crystals interlock into a mass, not a spray
+  CLUSTER_HEAD_Y: 32, // world Y of the growth front; the compact mass hangs ~16u below it (camera eases onto getFramingAnchors().brightCentroid, which tracks the dense centre)
+  CLUSTER_SPACING: 0.72, // arc-length the reef glides per slot — tight so the whole record packs into the short curl with heavy overlap (a mass, not beads on a string)
   CLUSTER_START_S: 1.6, // arc-length behind the head where the newest crystal roots
-  CLUSTER_FADE_S: 112, // arc-length where the settled matrix dissolves into space
+  CLUSTER_FADE_S: 46, // arc-length where the settled matrix dissolves into space — short: the record is a rounded boulder, not a long descending thread
   CLUSTER_GLIDE_RATE: 9, // easing rate (1/s) of the per-slot step — felt as a glide, not a snap
   CLUSTER_WAVE_SPEED: 30, // nucleation pulse speed cascading down the reef (units/s)
   CLUSTER_SWAY_YAW: 0.019, // rad/s — the whole cluster slowly turns like a hanging mobile
-  CLUSTER_DRUZY_PER_SLOT: 18, // micro-crystals deposited around each slot's crystal
+  CLUSTER_DRUZY_PER_SLOT: 24, // micro-crystals deposited around each slot's crystal — a packed druzy field filling the inter-crystal gaps so the crust reads continuous
   CLUSTER_GEM_IOR: 1.78, // refraction strength of young gem material
   CLUSTER_GEM_DISPERSION: 7.0, // chromatic fire (per-channel ior spread in the refraction)
   CLUSTER_GEM_THICKNESS: 3.2, // volume thickness (local units, × instance scale)
   CLUSTER_ATT_DISTANCE: 7.5, // attenuation distance — color-from-within depth
   CLUSTER_LIGHT_INTENSITY: 95, // physical candela of the head PointLight (decay 2 — newborns sit 1-3u away; keep them out of ACES white)
   CLUSTER_EMBER_INTENSITY: 160, // candela of the amber finality-band light (sits INSIDE the shell — it backlights the matrix through its crevices)
-  CLUSTER_EMBER_WIDTH: 8.0, // arc-length sigma of the ember band glow
+  CLUSTER_EMBER_WIDTH: 5.0, // arc-length sigma of the ember band — a TIGHT girdle (re-fit to the short ~44u visible arc) so amber doesn't wash the whole body; jewel above it, dark matrix below
 
   // Timing
   SLOT_INTERVAL: 400, // ms

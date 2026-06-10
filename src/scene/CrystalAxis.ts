@@ -160,15 +160,18 @@ export class CrystalAxis {
     this.mesh.name = 'crystal-cluster';
     this.mesh.position.set(0, CONFIG.CLUSTER_HEAD_Y, 0); // head = local origin
 
-    // ================= Spine: a graceful sweep down and behind =====================
-    // Same construction as the comet era (cubic Bézier → uniform arc-length resample
-    // → parallel-transport frames; no twist pops). Proven composition with the
-    // camera orbit and the validator cloud.
+    // ================= Spine: a compact 3D LOOP ==================================
+    // Not a thread and not a planar hook (which reads as a teardrop edge-on) but a
+    // ~57-unit loop that wraps in all three axes (cubic Bézier → uniform arc-length
+    // resample → parallel-transport frames; no twist pops). Head at top; the arc
+    // dives to a belly and curls BACK UP-AND-ACROSS so the matrix end tucks into the
+    // upper body instead of bottoming out as a tail. The crystal cloud it carries is
+    // near-equiaxed (~36×39×36) — a rounded boulder/geode from EVERY side, no taper.
     {
       const b0 = new THREE.Vector3(0, 0, 0);
-      const b1 = new THREE.Vector3(6, -40, -4);
-      const b2 = new THREE.Vector3(30, -78, 10);
-      const b3 = new THREE.Vector3(78, -106, 26);
+      const b1 = new THREE.Vector3(19, -11, 19);
+      const b2 = new THREE.Vector3(-10, -25, 25);
+      const b3 = new THREE.Vector3(-19, -15, -3);
       const R = CrystalAxis.CURVE_RES;
       const PRE = 1024;
       const pre: THREE.Vector3[] = [];
@@ -512,11 +515,17 @@ export class CrystalAxis {
     else if (s > this.curveLen) outP.addScaledVector(outT, s - this.curveLen);
   }
 
-  /** Matrix shell radius at arc-length s — thin neck at the head, swelling shell. */
+  /**
+   * Matrix shell radius at arc-length s. Fat from just below the head (NO thin
+   * neck — the old stalk read), swelling into a rounded botryoidal body, then
+   * rounding off toward the fade: the chunky core the jeweled crust grows on.
+   */
   private static stemRadius(s: number): number {
-    const grow = THREE.MathUtils.smoothstep(s, 2, 40);
-    const taper = 1 - 0.35 * THREE.MathUtils.smoothstep(s, 78, CONFIG.CLUSTER_FADE_S);
-    return (1.5 + 4.4 * grow) * taper;
+    const grow = THREE.MathUtils.smoothstep(s, 1, 16);   // bulk on immediately
+    const swell = THREE.MathUtils.smoothstep(s, 10, 34);  // round the body out
+    const taper = 1 - 0.5 * THREE.MathUtils.smoothstep(s, 32, CONFIG.CLUSTER_FADE_S);
+    // Fat solid core so the loop's interior reads as rock, not a see-through pocket.
+    return (3.4 + 5.8 * grow + 2.8 * swell) * taper;
   }
 
   // ================= Geometry builders ==============================================
@@ -633,10 +642,12 @@ export class CrystalAxis {
       for (let k = 0; k < SEGS; k++) {
         const ang = (k / SEGS) * Math.PI * 2;
         const ca = Math.cos(ang), sa = Math.sin(ang);
-        // Botryoidal lumps: seamless noise on the (cos, sin, s) domain
+        // Botryoidal lumps: seamless noise on the (cos, sin, s) domain — deep and
+        // multi-octave so the matrix reads as rough rock, not a smooth glowing skin.
         const n1 = CrystalAxis.vnoise3(ca * 1.6 + 7.3, sa * 1.6 + 2.1, s * 0.33);
         const n2 = CrystalAxis.vnoise3(ca * 3.4 + 1.7, sa * 3.4 + 9.2, s * 0.85);
-        const bump = (n1 - 0.5) * 0.52 + (n2 - 0.5) * 0.22;
+        const n3 = CrystalAxis.vnoise3(ca * 6.1 + 4.4, sa * 6.1 + 5.5, s * 1.7);
+        const bump = (n1 - 0.5) * 0.66 + (n2 - 0.5) * 0.32 + (n3 - 0.5) * 0.16;
         const r = r0 * (1 + bump);
         const idx = i * SEGS + k;
         positions[idx * 3] = p.x + (n.x * ca + b.x * sa) * r;
@@ -828,20 +839,25 @@ export class CrystalAxis {
     const dominant = slotInLeader === 0;
     this.segmentVariant[ring] = variant;
     this.segmentHue[ring] = hue;
-    this.gemTheta[ring] = azimuth + (slotInLeader - 1.5) * 0.52 + (rng() - 0.5) * 0.24;
-    this.gemTilt[ring] = 0.22 + 0.55 * rng();
+    // Fan the leader's four slots across a WIDE arc (not a tight stripe) so
+    // neighbouring leaders' deposits overlap and fill the cross-section — packed
+    // crystal, not see-through golden-angle stripes.
+    this.gemTheta[ring] = azimuth + (slotInLeader - 1.5) * 0.8 + (rng() - 0.5) * 0.42;
+    this.gemTilt[ring] = 0.18 + 0.62 * rng();
     this.gemRoll[ring] = rng() * Math.PI * 2;
-    this.gemLen[ring] = (7.2 + 5.2 * rng()) * (dominant ? 1.5 : 1.0);
-    this.gemWidX[ring] = (1.9 + 1.2 * rng()) * (dominant ? 1.25 : 1.0);
-    this.gemWidZ[ring] = (1.9 + 1.2 * rng()) * (dominant ? 1.25 : 1.0);
-    // Two flanking prisms splay around the main blade — the deposit reads as an
-    // interlocking clump (reference density), not a lone needle. Same slot, same
-    // family; they live on the two habit meshes the main crystal doesn't use.
+    // Chunky terminated prisms, bigger + wider so they interlock and overlap into a
+    // mass rather than sprinkle; the leader's first slot stays the dominant blade.
+    this.gemLen[ring] = (8.5 + 4.5 * rng()) * (dominant ? 1.45 : 1.0);
+    this.gemWidX[ring] = (3.1 + 1.8 * rng()) * (dominant ? 1.3 : 1.0);
+    this.gemWidZ[ring] = (3.1 + 1.8 * rng()) * (dominant ? 1.3 : 1.0);
+    // Two flanking prisms splay WIDE around the main blade — they tile the azimuthal
+    // gaps so the crust reads continuous. Same slot, same family; on the two habit
+    // meshes the main crystal doesn't use.
     for (let f = 0; f < 2; f++) {
       const i = ring * 2 + f;
-      this.gemFTheta[i] = this.gemTheta[ring] + (f === 0 ? -1 : 1) * (0.40 + 0.42 * rng());
-      this.gemFLen[i] = this.gemLen[ring] * (0.42 + 0.28 * rng());
-      this.gemFWid[i] = (this.gemWidX[ring] + this.gemWidZ[ring]) * 0.5 * (0.52 + 0.24 * rng());
+      this.gemFTheta[i] = this.gemTheta[ring] + (f === 0 ? -1 : 1) * (0.7 + 0.7 * rng());
+      this.gemFLen[i] = this.gemLen[ring] * (0.6 + 0.34 * rng());
+      this.gemFWid[i] = (this.gemWidX[ring] + this.gemWidZ[ring]) * 0.5 * (0.68 + 0.3 * rng());
     }
 
     // Metadata (ring-buffered; hover feature)
@@ -868,10 +884,10 @@ export class CrystalAxis {
     // A missed slot leaves a sparse pocket of dark cinders — the vacancy.
     for (let k = 0; k < K; k++) {
       const i = ring * K + k;
-      this.dTheta[i] = azimuth + (rng() - 0.5) * 2.3;
-      this.dSOff[i] = (rng() - 0.5) * 3.0; // absolute spread — independent of slot spacing
+      this.dTheta[i] = azimuth + (rng() - 0.5) * 3.4; // wide — a glitter field wrapping the whole cross-section
+      this.dSOff[i] = (rng() - 0.5) * 3.6; // absolute spread — independent of slot spacing
       this.dTilt[i] = 0.15 + 0.5 * rng();
-      let sc = 1.5 + 2.4 * rng();
+      let sc = 1.8 + 2.6 * rng();
       if (missed) sc *= k % 2 === 0 ? 0.6 : 0; // sparse, stunted
       this.dScale[i] = sc;
       this.dBirthAttr.setX(i, birth);
@@ -1015,6 +1031,15 @@ export class CrystalAxis {
         grow = x * x * (3 - 2 * x) * (1 + 0.16 * Math.sin(Math.PI * x));
       }
 
+      // Rooting retraction: crystals settle slightly shorter as they root so the old
+      // end rounds toward the matrix shell — but GENTLY (the colour ramp already
+      // carries the gem→matrix reveal; shrinking them hard left the tail hollow).
+      const ageT = THREE.MathUtils.clamp(
+        (this.scrollPos - 1 - birth) / CONFIG.FINALITY_DEPTH, 0, 1.6);
+      const rootK = THREE.MathUtils.smoothstep(ageT, 0.55, 1.15);
+      const lenTaper = 1 - 0.28 * rootK;
+      const widTaper = 1 - 0.10 * rootK;
+
       // --- The slot's crystal clump: main blade + two flankers (none for a
       // missed slot — the vacancy) ---
       let fi = 0;
@@ -1045,15 +1070,20 @@ export class CrystalAxis {
         );
         const dl = dir.length();
         if (dl > 1e-5) dir.multiplyScalar(1 / dl); else dir.set(0, 1, 0);
+        // Stagger the root depth per crystal so the deposit packs a THICK shell —
+        // some buried in the matrix, some proud — instead of a thin, see-through
+        // single-radius sleeve (a stable hash off the crystal's own azimuth).
+        const rh = Math.sin(th * 12.9898 + ring * 0.137) * 43758.5453;
+        const radF = 0.16 + 0.6 * (rh - Math.floor(rh));
         pos.set(
-          P.x + dir.x * stemR * 0.45,
-          P.y + dir.y * stemR * 0.45,
-          P.z + dir.z * stemR * 0.45,
+          P.x + dir.x * stemR * radF,
+          P.y + dir.y * stemR * radF,
+          P.z + dir.z * stemR * radF,
         );
         q.setFromUnitVectors(up, dir);
         qR.setFromAxisAngle(up, roll);
         q.multiply(qR);
-        scl.set(lx * grow, ly * grow, lz * grow);
+        scl.set(lx * grow * widTaper, ly * grow * lenTaper, lz * grow * widTaper);
         m.compose(pos, q, scl);
         this.gemMeshes[g].setMatrixAt(ring, m);
       }
