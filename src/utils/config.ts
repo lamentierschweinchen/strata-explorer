@@ -5,16 +5,23 @@ export const CONFIG = {
   CLOUD_OUTER_RADIUS: 150,
   CLOUD_HEIGHT: 100, // ±50
 
-  // Crystal axis — a faceted quartz prism that grows upward and crystallizes downward
+  // Crystalline comet — a tumbling crystal-cluster NUCLEUS (the growth front, where
+  // new slots condense) trailing a curved stream of shards (the ledger: one shard per
+  // slot, gliding away from the nucleus and settling into dark finality). This block
+  // replaces the old quartz-column constants.
   MAX_SEGMENTS: 200,
-  SEGMENT_HEIGHT: 1.5,
-  CRYSTAL_RADIUS: 24, // body radius — bumped from 16 so it commands the frame at orbit ~180
-  CRYSTAL_FACETS: 6, // hexagonal quartz cross-section (flat, hard-edged vertical facets)
-  CRYSTAL_IRREGULARITY: 0.22, // ±jitter on facet angle/radius → natural growth, not machined
-  CRYSTAL_TIP_TAPER: 12, // segments over which the growing tip tapers to a faceted point
-  CRYSTAL_TIP_MIN_SCALE: 0.05, // radius scale at the very tip (≈ terminating point)
-  CRYSTAL_APEX_OFFSET: [5.0, -3.5] as [number, number], // XZ apex offset — natural quartz terminations are off-center
-  FINALITY_DEPTH: 30, // segments behind current that are "crystallizing"
+  FINALITY_DEPTH: 30, // slots behind the head that are "crystallizing" (≈ Solana rooting depth)
+  COMET_NUCLEUS_Y: 24, // world Y where the nucleus is suspended (the fixed growth point)
+  COMET_TAIL_SPACING: 1.4, // arc-length the stream glides per slot — the living zone must CLEAR the coma
+  COMET_TAIL_START: 10, // arc-length behind nucleus center where the shard stream begins
+  COMET_FADE_S: 116, // arc-length where the settled tail dissolves into space (~74 slots of history)
+  COMET_GLIDE_RATE: 9, // easing rate (1/s) of the per-slot tail step — felt as a glide, not a snap
+  COMET_WAVE_SPEED: 30, // accretion pulse speed cascading down the tail (units/s)
+  COMET_SWAY_YAW: 0.021, // rad/s — the whole comet slowly turns like a hanging mobile
+  COMET_TUMBLE_SPEED: 0.07, // rad/s — nucleus self-rotation (facet glints sweep at idle)
+  NUCLEUS_GEM_RADIUS: 9.5, // central heart-gem radius (cluster points reach ~2.2×)
+  NUCLEUS_POINT_COUNT: 7, // crystal points jutting from the heart gem — few, long, varied
+  SHARD_SIDES: 6, // hexagonal cross-section of each tail shard (bipyramid)
 
   // Timing
   SLOT_INTERVAL: 400, // ms
@@ -61,12 +68,11 @@ export const CONFIG = {
   BREATH_PERIOD: 8, // seconds (base period; each mineral is phase-offset)
   BREATH_AMPLITUDE: 1.5, // units
 
-  // Crystal growth-tip light + flare (the per-slot hero pulse)
+  // Nucleus light + coma (the per-slot accretion bloom; names kept from the tip era)
   TIP_LIGHT_DISTANCE: 240, // PointLight reach
   TIP_LIGHT_BASE: 0.55, // idle intensity
-  TIP_LIGHT_PULSE: 2.4, // added intensity on a fresh slot, decays
-  TIP_GLOW_SIGMA: 72, // radius (units) of the cloud illumination falloff from the tip
-  CRYSTAL_BREATH_SCALE: 0.018, // ±1.8% idle radius breathing
+  TIP_LIGHT_PULSE: 2.4, // added intensity on each accretion strike, decays
+  TIP_GLOW_SIGMA: 72, // radius (units) of the cloud illumination falloff from the nucleus
 
   // Epoch-rollover ceremony (a real, rare event — every ~2 days the leader schedule
   // turns over): grand golden waves + a bloom swell + the HUD epoch glowing.
