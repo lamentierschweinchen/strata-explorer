@@ -3,11 +3,6 @@ import { TransactionInfo } from '../data/DataSource';
 import { TX_TYPE_DISPLAY, TX_TYPE_HEX } from '../utils/colors';
 import { shortenSignature } from '../utils/format';
 
-interface QueuedTx {
-  tx: TransactionInfo;
-  el: HTMLElement;
-}
-
 /** Public Solana explorer — each feed row deep-links to its real signature here. */
 const SOLSCAN_TX = 'https://solscan.io/tx/';
 
@@ -40,8 +35,12 @@ const PANEL_BG = 'rgba(5,5,16,0.4)';
 const PANEL_BORDER = 'rgba(255,255,255,0.08)';
 const MAX_VISIBLE = 10;
 const MAX_QUEUE = 50;
-const DRIP_INTERVAL = 1000; // one row per second — a calmer cadence than the old 800ms
-const FADE_MS = 300;
+// Batch refresh (Galaxy of Nodes pattern): every cycle the list is rebuilt as one sample
+// of the latest transactions, rows cascading in with a small stagger — instead of rows
+// dripping in one at a time and the panel resizing with every arrival.
+const REFRESH_MS = 1500;
+const ROW_STAGGER_MS = 50;
+const ROW_HEIGHT = 22; // fixed row slot height; the panel NEVER changes size
 
 const TX_TYPES = ['all', 'transfer', 'defi', 'nft', 'stake'] as const;
 
@@ -64,10 +63,9 @@ export class InfoOverlay {
   private activeFilter: string = 'all';
   private filterPills: Map<string, HTMLDivElement> = new Map();
 
-  // Transaction queue
+  // Rolling buffer of recent transactions; the refresh cycle samples its newest entries.
   private txQueue: TransactionInfo[] = [];
-  private visibleRows: QueuedTx[] = [];
-  private dripTimer = 0;
+  private refreshTimer = 0;
 
   // Visibility
   private visible = true;
@@ -197,7 +195,9 @@ export class InfoOverlay {
       display: 'flex',
       flexDirection: 'column',
       gap: '2px',
-      maxHeight: `${MAX_VISIBLE * 22}px`,
+      // FIXED height (not max-height): the panel reserves all ten row slots up front,
+      // so it never grows/shrinks — and never re-centers — as transactions arrive.
+      height: `${MAX_VISIBLE * ROW_HEIGHT}px`,
       overflow: 'hidden',
     });
     this.feedPanel.appendChild(this.feedList);
@@ -215,9 +215,10 @@ export class InfoOverlay {
       const hexColor = key === 'all' ? '#ffffff' : TX_TYPE_HEX[key] || '#ffffff';
       pill.style.background = key === type ? `${hexColor}25` : 'transparent';
     }
+    this.refresh(); // pills respond immediately, not on the next cycle
   }
 
-  private createRow(tx: TransactionInfo): HTMLElement {
+  private createRow(tx: TransactionInfo, staggerIndex: number): HTMLElement {
     const hexColor = TX_TYPE_HEX[tx.type] || '#ffffff';
     const sig = tx.signature ?? '';
     const linkable = sig.length >= 32; // a real base58 signature → deep-link to the explorer
@@ -238,12 +239,16 @@ export class InfoOverlay {
       fontFamily: 'monospace',
       fontSize: '9px',
       color: 'rgba(255,255,255,0.7)',
+      height: `${ROW_HEIGHT - 2}px`, // fixed slot height (2px = list gap)
+      boxSizing: 'border-box',
       padding: '2px 4px',
       margin: '0 -4px', // let the hover highlight reach the panel edges without shifting layout
       borderRadius: '4px',
       textDecoration: 'none',
       opacity: '0',
-      transition: `opacity ${FADE_MS}ms, background 0.15s`,
+      // Staggered cascade per refresh batch (txFadeIn keyframe lives in index.html)
+      animation: `txFadeIn 0.3s ease ${staggerIndex * ROW_STAGGER_MS}ms forwards`,
+      transition: 'background 0.15s',
       pointerEvents: linkable ? 'auto' : 'none',
       cursor: linkable ? 'pointer' : 'default',
     });
@@ -298,37 +303,24 @@ export class InfoOverlay {
       });
     }
 
-    // Fade in
-    requestAnimationFrame(() => {
-      row.style.opacity = '1';
-    });
-
     return row;
   }
 
-  private drip(): void {
-    if (this.txQueue.length === 0) return;
+  /**
+   * Rebuild the list as one batch: the newest ≤10 filter-matching transactions, newest
+   * on top, cascading in together (Galaxy of Nodes pattern). The list height is fixed,
+   * so a refresh never changes the panel's size or position.
+   */
+  private refresh(): void {
+    const matching =
+      this.activeFilter === 'all'
+        ? this.txQueue
+        : this.txQueue.filter((tx) => tx.type === this.activeFilter);
+    const latest = matching.slice(-MAX_VISIBLE).reverse(); // newest first
 
-    const tx = this.txQueue.shift()!;
-
-    // Filter check
-    if (this.activeFilter !== 'all' && tx.type !== this.activeFilter) {
-      return;
-    }
-
-    const el = this.createRow(tx);
-    this.feedList.prepend(el);
-    this.visibleRows.unshift({ tx, el });
-
-    // Remove excess
-    while (this.visibleRows.length > MAX_VISIBLE) {
-      const old = this.visibleRows.pop()!;
-      old.el.style.opacity = '0';
-      setTimeout(() => {
-        if (old.el.parentNode) {
-          old.el.parentNode.removeChild(old.el);
-        }
-      }, FADE_MS);
+    this.feedList.innerHTML = '';
+    for (let i = 0; i < latest.length; i++) {
+      this.feedList.appendChild(this.createRow(latest[i], i));
     }
   }
 
@@ -346,9 +338,12 @@ export class InfoOverlay {
       // Honesty guard: visual-only synthetic density particles must never enter the feed,
       // even if a future caller forwards them (the data engine already routes them elsewhere).
       if ((tx as TransactionInfo & TxEnrichment).synthetic) continue;
-      if (this.txQueue.length < MAX_QUEUE) {
-        this.txQueue.push(tx);
-      }
+      this.txQueue.push(tx);
+    }
+    // Rolling buffer: keep the NEWEST entries (drop oldest), so each refresh samples
+    // the most recent network activity.
+    if (this.txQueue.length > MAX_QUEUE) {
+      this.txQueue.splice(0, this.txQueue.length - MAX_QUEUE);
     }
   }
 
@@ -357,11 +352,11 @@ export class InfoOverlay {
   }
 
   update(dt: number, camera: THREE.PerspectiveCamera, rendererDom: HTMLElement): void {
-    // Drip feed timer
-    this.dripTimer += dt * 1000;
-    while (this.dripTimer >= DRIP_INTERVAL) {
-      this.dripTimer -= DRIP_INTERVAL;
-      this.drip();
+    // Batch refresh cycle (skipped while the overlay is hidden — no offscreen DOM churn)
+    this.refreshTimer += dt * 1000;
+    if (this.refreshTimer >= REFRESH_MS) {
+      this.refreshTimer = 0;
+      if (this.visible) this.refresh();
     }
 
     // Project leader label to 2D
@@ -396,7 +391,6 @@ export class InfoOverlay {
     if (this.feedPanel.parentNode) this.feedPanel.parentNode.removeChild(this.feedPanel);
 
     this.filterPills.clear();
-    this.visibleRows = [];
     this.txQueue = [];
   }
 }

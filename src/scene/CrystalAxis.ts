@@ -218,7 +218,7 @@ export class CrystalAxis {
       vertexShader: flareVertexShader,
       fragmentShader: flareFragmentShader,
       uniforms: {
-        uSize: { value: 44 }, // larger to crown the bigger faceted crystal
+        uSize: { value: 34 }, // crowns the tip without reading as a muzzle flash
         uIntensity: { value: 0 },
         uColor: { value: COLORS.TIP_LIGHT.clone() },
         uTime: { value: 0 },
@@ -323,7 +323,7 @@ export class CrystalAxis {
 
     const idle = CONFIG.TIP_LIGHT_BASE * (0.85 + 0.15 * breath01);
     this.tipLight.intensity = idle + this.tipPulse * CONFIG.TIP_LIGHT_PULSE;
-    this.flareMaterial.uniforms.uIntensity.value = this.tipPulse * 1.2 + 0.05; // faint idle ember
+    this.flareMaterial.uniforms.uIntensity.value = this.tipPulse * 0.8 + 0.04; // faint idle ember
     // Steady inner wash + per-slot surge, consumed by the validator cloud shader.
     this.tipGlowIntensity = CONFIG.TIP_LIGHT_BASE * (0.6 + 0.2 * breath01) + this.tipPulse;
 

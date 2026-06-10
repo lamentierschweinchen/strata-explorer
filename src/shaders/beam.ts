@@ -30,7 +30,7 @@ export const beamFragmentShader = /* glsl */ `
     if (uDashEnabled > 0.5) {
       float pattern = fract(vUv.x * 8.0 - uTime * 2.0);
       dash = smoothstep(0.3, 0.4, pattern) * (1.0 - smoothstep(0.6, 0.7, pattern));
-      dash = mix(0.15, 1.0, dash); // dim between dashes, not invisible
+      dash = mix(0.3, 0.85, dash); // gentle pulse along the thread, not tracer fire
     }
 
     // Deposition strike packet — a hot pulse of light racing toward the crystal,
@@ -42,12 +42,12 @@ export const beamFragmentShader = /* glsl */ `
       packet += exp(-pow(max(uPulseT - vUv.x, 0.0), 2.0) * 60.0) * 0.4 * step(vUv.x, uPulseT);
     }
 
-    float alpha = glow * (dash + packet * 2.4) * uOpacity;
+    float alpha = glow * (dash + packet * 1.1) * uOpacity;
     if (alpha < 0.001) discard;
 
-    // Core is brighter white, edges take beam color; the packet burns hot white
+    // Core is brighter white, edges take beam color; the packet glows warm, not laser-hot
     vec3 coreColor = mix(uColor, vec3(1.0, 0.98, 0.95), glow * 0.4);
-    coreColor = mix(coreColor, vec3(1.0, 0.99, 0.96), clamp(packet, 0.0, 1.0) * 0.9);
+    coreColor = mix(coreColor, vec3(1.0, 0.97, 0.9), clamp(packet, 0.0, 1.0) * 0.6);
 
     gl_FragColor = vec4(coreColor * alpha, alpha);
   }

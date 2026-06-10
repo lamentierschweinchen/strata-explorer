@@ -333,7 +333,7 @@ export const crystalFragmentShader = /* glsl */ `
     // the body from the apex: the block being absorbed into the record.
     float ringY = uGrowthPointY - uStrikeT * 42.0;
     float strikeRing = exp(-pow(vWorldY - ringY, 2.0) / 9.0) * exp(-uStrikeT * 2.4);
-    col += mix(uCoreColor, uYoungColor, 0.45) * strikeRing * 0.8 * (0.55 + 0.45 * veil);
+    col += mix(uCoreColor, uYoungColor, 0.45) * strikeRing * 0.6 * (0.55 + 0.45 * veil);
     col += disp * 0.5;
     col += prism;
     col += flashCol;
