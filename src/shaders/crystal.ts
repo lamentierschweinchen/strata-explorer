@@ -31,6 +31,7 @@ export const crystalVertexShader = /* glsl */ `
   uniform float uFinalityHeight;
   uniform float uTipTaperHeight; // world height over which the tip tapers to a point
   uniform float uTipMinScale;    // radius scale at the very tip
+  uniform vec2 uApexOffset;      // XZ offset of the terminating apex (asymmetric, like real quartz)
 
   void main() {
     vFlash = aFlash;
@@ -47,20 +48,26 @@ export const crystalVertexShader = /* glsl */ `
     float distFromTop = uGrowthPointY - worldY;
     vAge = clamp(distFromTop / uFinalityHeight, 0.0, 1.0);
 
-    // --- Terminating-point taper -------------------------------------------------
-    // Radius ramps from a near-point at the tip up to full body over the tip zone,
-    // then narrows very slightly toward the deep base (embedding into bedrock).
-    float tt = clamp(distFromTop / uTipTaperHeight, 0.0, 1.0);
+    // --- Terminating-point taper (uneven, like a natural quartz termination) ------
+    // Each CORNER gets its own taper height, hashed from its angular position. Both
+    // facets meeting at a corner share its exact xz, so the hash matches and the mesh
+    // stays watertight — but adjacent corners converge at different rates, which turns
+    // the perfect "rocket nose" into an irregular rhombohedral-looking termination.
+    float cAng = atan(position.z, position.x);
+    float cj = fract(sin(cAng * 37.719) * 43758.5453);
+    float taperH = uTipTaperHeight * (0.72 + 0.62 * cj);
+    float tt = clamp(distFromTop / taperH, 0.0, 1.0);
     float taperUp = smoothstep(0.0, 1.0, tt);
     float radiusScale = mix(uTipMinScale, 1.0, taperUp) * (1.0 - 0.05 * vAge);
 
     // Analytic slope d(radius)/d(worldY) of the tip ramp, used to re-tilt the flat
     // facet normal so the terminating faces (which slope inward/up) shade correctly.
     float baseR = length(position.xz);
-    float dTaper = (1.0 - uTipMinScale) * 6.0 * tt * (1.0 - tt) / max(uTipTaperHeight, 0.001);
+    float dTaper = (1.0 - uTipMinScale) * 6.0 * tt * (1.0 - tt) / max(taperH, 0.001);
     float slope = -baseR * dTaper; // radius shrinks as worldY rises near the tip
 
-    pos.xz *= radiusScale;
+    // Taper pulls corners toward an OFF-CENTER apex, so the point sits asymmetric.
+    pos.xz = pos.xz * radiusScale + uApexOffset * (1.0 - radiusScale);
     pos.y = worldY;
 
     // Flat facet normal (horizontal, from the attribute) tilted by the taper slope.
@@ -90,13 +97,18 @@ export const crystalFragmentShader = /* glsl */ `
 
   uniform float uTime;
   uniform float uBreath;         // 0..1 idle dual-frequency breathing drive
+  uniform float uTipPulse;       // 0..1 per-slot pulse — drives the body-wide inner light surge
   uniform float uSegmentHeight;  // world height of one strata layer
   uniform float uFinalityHeight;
+  uniform float uTipTaperHeight; // taper-zone height (phantom ghost-termination spacing)
   uniform float uGrowthPointY;
+  uniform vec2 uApexOffset;      // where the apex actually sits (SSS light origin)
+  uniform float uBodyRadius;     // nominal body radius (phantom radial profile)
   uniform vec3 uYoungColor;
   uniform vec3 uSettingColor;
   uniform vec3 uFinalColor;
   uniform vec3 uCoreColor;
+  uniform vec3 uInclusionColor;  // amber veils inside the violet body
 
   // --- 3D value noise for internal inclusions (phantom quartz veils) ---
   float hash13(vec3 p) {
@@ -153,14 +165,50 @@ export const crystalFragmentShader = /* glsl */ `
 
     // --- Internal structure seen THROUGH the facets (so it's not a hollow shell) ---
     // Sample inclusion noise along the refracted view ray for a parallax "depth" feel.
+    // The fields drift slowly UPWARD — the growth direction — so the interior is alive.
     vec3 Rr = refract(-V, N, 0.66); // IOR ~1.5 (quartz)
-    float incl = fbm3(vWorldPos * 0.10 + Rr * 2.0)
-               + fbm3(vWorldPos * 0.10 + Rr * 6.0) * 0.6;
+    vec3 drift = vec3(0.0, -uTime * 0.012, 0.0);
+    float incl = fbm3(vWorldPos * 0.10 + drift + Rr * 2.0)
+               + fbm3(vWorldPos * 0.10 + drift + Rr * 6.0) * 0.6;
     incl /= 1.6;
     float inclMask = smoothstep(0.35, 0.78, incl);
     vec3 inclYoung = vec3(0.45, 0.72, 1.0);
     vec3 inclOld   = vec3(0.20, 0.16, 0.28);
     vec3 inclusionCol = mix(inclOld, inclYoung, clamp(youngF + setF * 0.4, 0.0, 1.0)) * inclMask;
+
+    // Milky vertical veils (anisotropic: stretched along the growth axis), used to
+    // texture the inner light so it reads as mineral, not fog.
+    float veil = fbm3(vec3(vWorldPos.x * 0.14, vWorldPos.y * 0.05, vWorldPos.z * 0.14) + drift + Rr * 1.6);
+
+    // --- Fake subsurface scattering: the tip light diffuses DOWN through the body.
+    // Two falloffs (a hot near-tip core + a long soft tail), textured by the veils,
+    // breathing at idle and SURGING body-wide on each slot (uTipPulse) — the heartbeat
+    // visibly travels through the whole gem, not just the newest segment.
+    vec3 tipPos = vec3(uApexOffset.x, uGrowthPointY, uApexOffset.y);
+    float tipDist = distance(vWorldPos, tipPos);
+    float sss = (exp(-tipDist / 20.0) * 0.50 + exp(-tipDist / 70.0) * 0.22)
+              * (0.45 + 0.55 * veil)
+              * (0.62 + 0.28 * uBreath + 0.9 * uTipPulse);
+    // The inner light is icy-white at the tip but turns AMETHYST as it descends, so the
+    // violet zone reads as a violet glow instead of being washed white.
+    vec3 sssCol = mix(uSettingColor * 1.15, mix(uYoungColor, uCoreColor, 0.35),
+                      clamp(youngF * 1.2, 0.0, 1.0)) * sss;
+
+    // --- Amber veil inclusions: golden mineral threads inside the violet body (the
+    // validator-cloud gold, embedded in the gem). Strongest in the setting zone.
+    float amberMask = smoothstep(0.55, 0.85, fbm3(vWorldPos * 0.07 + vec3(3.7) + drift * 0.5 + Rr * 2.4));
+    vec3 amberCol = uInclusionColor * amberMask * (setF * 0.85 + finalF * 0.30) * (0.5 + 0.5 * veil);
+
+    // --- Phantom growth layers: ghost outlines of EARLIER terminations preserved
+    // inside the crystal (real phantom-quartz feature — and literally the strata story:
+    // past states of the chain, visible in the body). Two ghosts at different depths.
+    float radFrac = length(vWorldPos.xz - uApexOffset) / max(uBodyRadius, 0.001);
+    float ghost1 = smoothstep(0.0, 1.0, clamp((distFromTop - uTipTaperHeight * 0.45) / uTipTaperHeight, 0.0, 1.0));
+    float ghost2 = smoothstep(0.0, 1.0, clamp((distFromTop - uTipTaperHeight * 0.95) / uTipTaperHeight, 0.0, 1.0));
+    float phantom = smoothstep(0.10, 0.02, abs(radFrac - ghost1)) * 0.55
+                  + smoothstep(0.10, 0.02, abs(radFrac - ghost2)) * 0.30;
+    phantom *= (youngF * 0.7 + setF * 0.5) * (0.4 + 0.6 * veil);
+    vec3 phantomCol = mix(uYoungColor, uInclusionColor, 0.35) * phantom;
 
     // Strata banding — each segment is one layer; thin dark seam at each boundary,
     // plus a per-segment value shift (seeded) so the layers read as sediment.
@@ -172,6 +220,9 @@ export const crystalFragmentShader = /* glsl */ `
     vec3 baseColor = uYoungColor * youngF + uSettingColor * setF + uFinalColor * finalF;
     baseColor *= (0.75 + 0.25 * strata);
     baseColor = mix(baseColor, baseColor * 0.5, (1.0 - seam) * (0.4 + 0.6 * finalF));
+    // Color zoning depth: looking face-on = looking deepest into the body, so the hue
+    // saturates there (self-multiply deepens without brightening) — gem, not paint.
+    baseColor = mix(baseColor, baseColor * baseColor * 2.4, (1.0 - fres) * 0.5);
     baseColor += inclusionCol * (0.25 + 0.45 * youngF);
     // Hot-white core where we look straight into a young facet.
     float coreLook = pow(max(NdotV, 0.0), 1.5);
@@ -217,20 +268,32 @@ export const crystalFragmentShader = /* glsl */ `
     float emissive = youngF * 0.34 + setF * 0.16 + finalF * 0.05;
     float pulse = 1.0 + sin(uTime * 3.0 + vWorldY * 0.5) * 0.04 * youngF;
 
+    // --- Crystallizing front: the newest material is still "forming" — a bright,
+    // shimmering band right at the growth edge that visibly cools into solid crystal.
+    float front = smoothstep(0.085, 0.0, vAge);
+    float frontShimmer = noise3(vWorldPos * vec3(0.9, 1.7, 0.9) + uTime * vec3(0.25, 0.6, 0.25));
+    vec3 frontCol = mix(uCoreColor, uYoungColor, 0.4) * front
+                  * (0.25 + 0.45 * frontShimmer) * (1.0 + 1.0 * uTipPulse);
+
     vec3 col = baseColor * (diff * 0.5 + emissive) * breath * pulse;
     col += envCol * reflAmt;                                   // sweeping reflective sheen
     col += mix(vec3(0.8, 0.9, 1.05), uCoreColor, 0.4) * spec * (0.6 + 0.9 * youngF); // glints
     vec3 rimCol = mix(mix(uYoungColor, vec3(0.55, 0.72, 1.0), 0.5),
                       vec3(0.42, 0.50, 0.78), finalF * 0.6);
     col += rimCol * rim * 0.6 * breath;
+    col += sssCol * (0.30 + 0.50 * clamp(youngF + setF, 0.0, 1.0)); // inner light, strongest in living zones
+    col += amberCol;                                  // golden veins in the violet body
+    col += phantomCol;                                // ghost terminations of past growth
+    col += frontCol;                                  // the forming edge
     col += disp * 0.5;
     col += prism;
     col += flashCol;
 
     // --- Alpha: young translucent & glowing, finalized opaque bedrock. Glints/rim
     // add alpha so highlights stay crisp even on the translucent tip. ---
-    float baseAlpha = youngF * 0.40 + setF * 0.70 + finalF * 0.96;
-    float alpha = baseAlpha * pulse + spec * 0.7 + rim * 0.3 + flashA + reflAmt * 0.15;
+    float baseAlpha = youngF * 0.50 + setF * 0.78 + finalF * 0.96;
+    float alpha = baseAlpha * pulse + spec * 0.7 + rim * 0.3 + flashA + reflAmt * 0.15
+                + sss * 0.10 + front * 0.14 + phantom * 0.10;
 
     // Deep tail dissolve → a finite, elegant spire instead of an endless dark bar.
     float deepFade = 1.0 - smoothstep(uFinalityHeight * 1.4, uFinalityHeight * 2.6, distFromTop);

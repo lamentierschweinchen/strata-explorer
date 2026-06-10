@@ -10,9 +10,10 @@ export const CONFIG = {
   SEGMENT_HEIGHT: 1.5,
   CRYSTAL_RADIUS: 24, // body radius — bumped from 16 so it commands the frame at orbit ~180
   CRYSTAL_FACETS: 6, // hexagonal quartz cross-section (flat, hard-edged vertical facets)
-  CRYSTAL_IRREGULARITY: 0.16, // ±jitter on facet angle/radius → natural growth, not machined
+  CRYSTAL_IRREGULARITY: 0.22, // ±jitter on facet angle/radius → natural growth, not machined
   CRYSTAL_TIP_TAPER: 12, // segments over which the growing tip tapers to a faceted point
   CRYSTAL_TIP_MIN_SCALE: 0.05, // radius scale at the very tip (≈ terminating point)
+  CRYSTAL_APEX_OFFSET: [5.0, -3.5] as [number, number], // XZ apex offset — natural quartz terminations are off-center
   FINALITY_DEPTH: 30, // segments behind current that are "crystallizing"
 
   // Timing

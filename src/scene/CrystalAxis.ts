@@ -179,10 +179,14 @@ export class CrystalAxis {
         uTipMinScale: { value: CONFIG.CRYSTAL_TIP_MIN_SCALE },
         uSegmentHeight: { value: CONFIG.SEGMENT_HEIGHT },
         uBreath: { value: 0.5 },
+        uTipPulse: { value: 0 },
+        uApexOffset: { value: new THREE.Vector2(...CONFIG.CRYSTAL_APEX_OFFSET) },
+        uBodyRadius: { value: CONFIG.CRYSTAL_RADIUS },
         uYoungColor: { value: COLORS.CRYSTAL_YOUNG.clone() },
         uSettingColor: { value: COLORS.CRYSTAL_SETTING.clone() },
         uFinalColor: { value: COLORS.CRYSTAL_OLD.clone() },
         uCoreColor: { value: COLORS.CRYSTAL_CORE.clone() },
+        uInclusionColor: { value: COLORS.CRYSTAL_AMBER.clone() },
       },
       transparent: true,
       depthWrite: true,
@@ -295,11 +299,13 @@ export class CrystalAxis {
     this.mesh.scale.x = s;
     this.mesh.scale.z = s; // radius breathes; Y left at 1 so the stack height is stable
 
-    // --- Tip pulse decay + position the light/flare at the (steady) growth point ---
+    // --- Tip pulse decay + position the light/flare at the ACTUAL (off-center) apex ---
     this.tipPulse = this.tipPulse > 0.001 ? this.tipPulse * Math.exp(-dt * 3.2) : 0;
+    this.material.uniforms.uTipPulse.value = this.tipPulse;
     const tipY = this.getGrowthPointY();
-    this.tipLight.position.set(0, tipY, 0);
-    this.flare.position.set(0, tipY, 0);
+    const [ax, az] = CONFIG.CRYSTAL_APEX_OFFSET;
+    this.tipLight.position.set(ax, tipY, az);
+    this.flare.position.set(ax, tipY, az);
 
     const idle = CONFIG.TIP_LIGHT_BASE * (0.85 + 0.15 * breath01);
     this.tipLight.intensity = idle + this.tipPulse * CONFIG.TIP_LIGHT_PULSE;
