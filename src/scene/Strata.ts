@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { SolanaDataSource } from '../data/DataSource';
+import type { SolanaDataSource, TransactionInfo } from '../data/DataSource';
 import { CONFIG } from '../utils/config';
 import { COLORS } from '../utils/colors';
 import { ValidatorCloud } from './ValidatorCloud';
@@ -67,6 +67,21 @@ export class Strata {
 
   // Epoch watch — a rollover (~every 2 days) triggers the ceremony
   private lastEpoch = -1;
+
+  /**
+   * Optional external event tap (e.g. the ?dj audio overlay): a passive observer of the SAME
+   * chain events that drive the visuals, called alongside them. All members optional; when
+   * unset this is inert. onTransactions receives REAL transactions only (synthetic density
+   * particles never pass through here — same honesty rule as the feed).
+   */
+  public eventTap?: {
+    onSlot?: (slot: number, missed: boolean) => void;
+    onLeaderIndex?: (leaderIndex: number) => void;
+    onTransactions?: (txs: TransactionInfo[]) => void;
+    onFinality?: (rootSlot: number) => void;
+    onTps?: (tps: number) => void;
+    onEpochProgress?: (p01: number) => void;
+  };
 
   static async create(container: HTMLElement, dataSource: SolanaDataSource): Promise<Strata> {
     await dataSource.initialize();
@@ -245,6 +260,11 @@ export class Strata {
         // Epoch rollover — a real, rare event: the leader schedule turns over.
         if (this.lastEpoch >= 0 && epochInfo.epoch > this.lastEpoch) this.epochCeremony();
         this.lastEpoch = epochInfo.epoch;
+
+        // External tap (the ?dj audio overlay hears the same heartbeat the crystal grows by).
+        this.eventTap?.onSlot?.(slot, missed);
+        this.eventTap?.onLeaderIndex?.(leaderIdx);
+        this.eventTap?.onEpochProgress?.(epochInfo.slotIndex / Math.max(1, epochInfo.slotsInEpoch));
       },
 
       onValidatorsUpdated: (_validators) => {
@@ -262,10 +282,12 @@ export class Strata {
 
         this.txCountThisSecond += txs.length;
         this.infoOverlay.pushTransactions(txs);
+        this.eventTap?.onTransactions?.(txs); // real txs only — the engine paces them in here
       },
 
-      onRootAdvance: (_rootSlot) => {
+      onRootAdvance: (rootSlot) => {
         // Finality is handled by CrystalAxis age computation
+        this.eventTap?.onFinality?.(rootSlot);
       },
     }));
   }
@@ -305,7 +327,9 @@ export class Strata {
     if (this.tpsTimer >= 1.0) {
       const spawnTps = this.txCountThisSecond / this.tpsTimer;
       // Prefer the data source's real network TPS; fall back to the particle spawn rate.
-      this.hud.updateTps(this.dataSource.getTps?.() ?? spawnTps);
+      const tps = this.dataSource.getTps?.() ?? spawnTps;
+      this.hud.updateTps(tps);
+      this.eventTap?.onTps?.(tps);
       this.txCountThisSecond = 0;
       this.tpsTimer = 0;
     }

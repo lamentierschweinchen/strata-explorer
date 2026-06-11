@@ -38,6 +38,12 @@ async function startWith(dataSource: SolanaDataSource): Promise<void> {
   // Dev-only introspection handle (stripped from production builds).
   if (import.meta.env.DEV) (window as any).__strata = strata;
 
+  // ?dj — the chain-reactive audio engine + mixing desk overlaid on the live scene. The SAME
+  // events grow the crystal and make the sound. Dynamically imported: zero cost without the flag.
+  if (new URLSearchParams(window.location.search).has('dj')) {
+    void mountDjMode(strata);
+  }
+
   // Rehearsal hook: ?ceremony fires the epoch-rollover choreography once, ~5s after
   // load — for previewing on any screen. The real one fires on actual epoch rollover.
   if (new URLSearchParams(window.location.search).has('ceremony')) {
@@ -55,6 +61,77 @@ async function startWith(dataSource: SolanaDataSource): Promise<void> {
   }
   requestAnimationFrame(loop);
   window.addEventListener('resize', () => strata.resize());
+}
+
+/**
+ * ?dj mode: load the audio engine + studio desk (code-split), hook them to the SAME chain events
+ * that drive the visuals via strata.eventTap, and gate sound behind the required user gesture.
+ */
+async function mountDjMode(strata: Strata): Promise<void> {
+  const [{ AudioEngine }, { mountStudio }] = await Promise.all([
+    import('./audio/AudioEngine'),
+    import('./audio/StudioDesk'),
+  ]);
+
+  const engine = new AudioEngine();
+  (window as any).strataAudio = engine; // console hook, same as the standalone studio
+
+  // Live readouts for the desk header, fed by the tap below.
+  const live: { slot?: number; tps?: number; bar?: number } = {};
+  let leaderChanges = 0;
+  let lastLeaderIdx = -1;
+
+  // The tx `value` is a coarse log-normal magnitude (~1..300, real on-chain log volume in live
+  // mode) — compress it to 0..1 for the accent the same way the visuals compress it for size.
+  const valueTo01 = (v: number): number => Math.max(0, Math.min(1, Math.log10(1 + Math.max(0, v)) / 2.5));
+
+  strata.eventTap = {
+    onSlot: (slot, missed) => {
+      live.slot = slot;
+      engine.onSlot(slot, missed);
+    },
+    onLeaderIndex: (leaderIndex) => {
+      engine.onLeaderChange(leaderIndex); // engine dedups repeats itself
+      if (leaderIndex !== lastLeaderIdx) {
+        lastLeaderIdx = leaderIndex;
+        live.bar = ++leaderChanges; // one leader = one bar
+      }
+    },
+    onTransactions: (txs) => {
+      for (const tx of txs) {
+        if (tx.synthetic) continue; // defense-in-depth: density particles are visual-only
+        engine.onTransaction(tx.type, valueTo01(tx.value));
+      }
+    },
+    onFinality: (rootSlot) => engine.onFinality(rootSlot),
+    onTps: (tps) => {
+      live.tps = Math.round(tps);
+      engine.setActivity(tps);
+    },
+    onEpochProgress: (p01) => engine.onEpochProgress(p01),
+  };
+
+  // Browsers require a user gesture for audio: a small pill, then the desk.
+  const pill = document.createElement('button');
+  pill.textContent = '▶ TAP FOR SOUND';
+  pill.style.cssText =
+    "position:fixed;bottom:24px;right:24px;z-index:31;font-family:'SF Mono',ui-monospace,monospace;" +
+    'background:rgba(5,5,16,0.85);border:1px solid rgba(255,255,255,0.3);color:rgba(255,255,255,0.9);' +
+    'border-radius:999px;padding:12px 22px;font-size:12px;letter-spacing:2px;cursor:pointer;backdrop-filter:blur(8px);';
+  pill.addEventListener('click', () => {
+    void (async () => {
+      try {
+        await engine.start();
+        engine.setMuted(false);
+        pill.remove();
+        mountStudio(engine, { overlay: true, readouts: () => live });
+      } catch (e) {
+        console.error('[dj] audio start failed', e);
+        pill.textContent = '✕ AUDIO FAILED';
+      }
+    })();
+  });
+  document.body.appendChild(pill);
 }
 
 if (!hasWebGL()) {

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Strata · audio engine — listen test</title>
+  <meta name="robots" content="noindex" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: #050510; }
+  </style>
+</head>
+<body>
+  <!--
+    Dev-only listen test for src/audio/AudioEngine.ts.
+    Run:  npm run dev   →   open http://localhost:5173/audiotest.html
+    Not an input in vite.config.ts, so it is never part of the production build.
+  -->
+  <script type="module" src="/src/audio/audiotest.ts"></script>
+</body>
+</html>

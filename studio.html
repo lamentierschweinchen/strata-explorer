@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Strata · audio studio</title>
+  <meta name="robots" content="noindex" />
+  <style>
+    html, body { margin: 0; background: #050510; }
+  </style>
+</head>
+<body>
+  <!--
+    The standalone mixing desk for src/audio/AudioEngine.ts — the synthetic chain plays on
+    Solana's real cadence while you mix; mix links are shareable. Dev: /studio.html on the
+    vite server. Also a vite build input (see vite.config.ts), so production serves it too —
+    unlinked and noindex'd, for making/tuning the gallery sound from any machine.
+  -->
+  <script type="module" src="/src/audio/studio.ts"></script>
+</body>
+</html>
