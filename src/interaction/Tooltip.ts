@@ -13,7 +13,7 @@ export class Tooltip {
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
       border-radius: 6px;
-      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-family: 'ABC Diatype Semi-Mono', 'SF Mono', monospace;
       font-size: 11px;
       color: #c8cad0;
       max-width: 280px;

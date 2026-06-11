@@ -40,7 +40,7 @@ export class HUD {
 
     this.activityLabel = document.createElement('div');
     this.activityLabel.style.cssText = `
-      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-family: 'ABC Diatype Semi-Mono', 'SF Mono', monospace;
       font-size: 9px; letter-spacing: 2px; color: rgba(255,255,255,0.34);
       text-transform: uppercase;
     `;
@@ -85,7 +85,7 @@ export class HUD {
     const labelEl = document.createElement('div');
     labelEl.className = 'hud-text';
     labelEl.style.cssText = `
-      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-family: 'ABC Diatype Semi-Mono', 'SF Mono', monospace;
       font-size: 9px; letter-spacing: 2px; color: rgba(255,255,255,0.3);
       text-transform: uppercase; margin-bottom: 2px;
     `;
@@ -95,7 +95,7 @@ export class HUD {
     const valueEl = document.createElement('div');
     valueEl.className = 'hud-value';
     valueEl.style.cssText = `
-      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-family: 'ABC Diatype Semi-Mono', 'SF Mono', monospace;
       font-size: 14px; color: rgba(255,255,255,0.7);
       font-weight: 300; letter-spacing: 1px;
     `;

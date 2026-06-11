@@ -121,7 +121,7 @@ export class InfoOverlay {
     this.leaderLabel = document.createElement('div');
     Object.assign(this.leaderLabel.style, {
       position: 'absolute',
-      fontFamily: 'monospace',
+      fontFamily: "'ABC Diatype Semi-Mono', 'SF Mono', monospace",
       fontSize: '10px',
       color: '#ffc850',
       textTransform: 'uppercase',
@@ -165,7 +165,7 @@ export class InfoOverlay {
     // Feed header
     this.feedHeader = document.createElement('div');
     Object.assign(this.feedHeader.style, {
-      fontFamily: 'monospace',
+      fontFamily: "'ABC Diatype Semi-Mono', 'SF Mono', monospace",
       fontSize: '9px',
       textTransform: 'uppercase',
       letterSpacing: '1.5px',
@@ -189,7 +189,7 @@ export class InfoOverlay {
       const pill = document.createElement('div');
       const hexColor = type === 'all' ? '#ffffff' : TX_TYPE_HEX[type] || '#ffffff';
       Object.assign(pill.style, {
-        fontFamily: 'monospace',
+        fontFamily: "'ABC Diatype Semi-Mono', 'SF Mono', monospace",
         fontSize: '8px',
         textTransform: 'uppercase',
         letterSpacing: '0.5px',
@@ -255,7 +255,7 @@ export class InfoOverlay {
       display: 'flex',
       alignItems: 'center',
       gap: '6px',
-      fontFamily: 'monospace',
+      fontFamily: "'ABC Diatype Semi-Mono', 'SF Mono', monospace",
       fontSize: '9px',
       color: 'rgba(255,255,255,0.7)',
       height: `${ROW_HEIGHT - 2}px`, // fixed slot height (2px = list gap)

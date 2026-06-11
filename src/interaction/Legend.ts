@@ -12,7 +12,10 @@ const GLASS_BG_HOVER = 'rgba(5,5,16,0.85)';
 const GLASS_BORDER = 'rgba(255,255,255,0.15)';
 const GLASS_BORDER_HOVER = 'rgba(255,255,255,0.4)';
 const GLASS_BLUR = 'blur(10px)';
-const MONO = "'SF Mono', 'Fira Code', monospace";
+const MONO = "'ABC Diatype Semi-Mono', 'SF Mono', monospace";
+// Prose (the metaphor line, row meanings) speaks in the humanist brand face;
+// labels and anything number-shaped stay semi-mono.
+const PROSE = "'ABC Diatype', system-ui, sans-serif";
 
 // One-line metaphor header (canonical hero line from COPY.md).
 const METAPHOR = 'The Solana blockchain as a living crystal, growing with each heartbeat of the network.';
@@ -28,12 +31,18 @@ interface LegendRow {
 // Transaction-type dot colors (kept in sync with utils/colors TX_TYPE_HEX).
 const TX_COLORS = ['#ffd700', '#00e5ff', '#aa66ff', '#4cd964'];
 
-// Small inline crystal glyph used in the panel's first row (mirrors the button icon).
+// Small inline crystal-cluster glyph used in the panel's first row (mirrors the button
+// icon): three angular shards of different heights leaning together, like the geode crest.
 const CRYSTAL_GLYPH = `
   <svg width="13" height="15" viewBox="0 0 18 18" fill="none" style="display:block;margin:1px auto 0;">
-    <polygon points="9,1.5 13,6 11,16.5 7,16.5 5,6"
-      fill="url(#stxLegendGrad)" stroke="rgba(180,210,255,0.55)" stroke-width="0.5"/>
-    <circle cx="9" cy="3" r="2" fill="#cfe4ff" opacity="0.85"/>
+    <g stroke="rgba(5,5,16,0.9)" stroke-width="0.6" stroke-linejoin="round">
+      <polygon points="3.9,6.8 6.2,9 7.3,16 3.9,16 2.5,9.8" fill="url(#stxLegendGrad)"/>
+      <polygon points="14.6,8.4 15.8,11.5 14.3,16 11,16 12.7,10.4" fill="url(#stxLegendGrad)"/>
+      <polygon points="9.6,2 11.8,5.9 11,16 6.8,16 7.3,6.5" fill="url(#stxLegendGrad)"/>
+    </g>
+    <polygon points="9.6,2 7.3,6.5 6.8,16 9.3,16" fill="#ffffff" opacity="0.14"/>
+    <polygon points="14.6,8.4 12.7,10.4 11,16 12.7,16" fill="#000000" opacity="0.18"/>
+    <polygon points="3.9,6.8 2.5,9.8 3.9,16 5.3,16" fill="#000000" opacity="0.12"/>
   </svg>`;
 
 // Small left-light / right-dark gradient swatch for the "Light and dark" row.
@@ -216,22 +225,30 @@ export class Legend {
     });
   }
 
-  /** The crystal mini-icon used on the button. */
+  /**
+   * The crystal-cluster mini-icon used on the button: three angular shards of different
+   * heights leaning together (the geode crest), hued along the Solana gradient axis
+   * purple #9945FF → magenta → green #14F195. Same mark as /favicon.svg.
+   */
   private crystalIcon(): string {
     const s = this.isMobile ? 15 : 17;
     return `
       <svg width="${s}" height="${s}" viewBox="0 0 18 18" fill="none">
         <defs>
-          <linearGradient id="stxBtnGrad" x1="9" y1="1" x2="9" y2="17" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="#bcd8ff"/>
-            <stop offset="0.5" stop-color="#5a7fd0"/>
-            <stop offset="1" stop-color="#1a1730"/>
+          <linearGradient id="stxBtnGrad" x1="2.8" y1="16.3" x2="15.2" y2="1.7" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#9945FF"/>
+            <stop offset="0.48" stop-color="#EB33CC"/>
+            <stop offset="0.7" stop-color="#14F195"/>
           </linearGradient>
         </defs>
-        <polygon points="9,1.5 13,6 11,16.5 7,16.5 5,6"
-          fill="url(#stxBtnGrad)" stroke="rgba(180,210,255,0.5)" stroke-width="0.5"/>
-        <line x1="9" y1="1.5" x2="9" y2="16.5" stroke="rgba(220,235,255,0.35)" stroke-width="0.4"/>
-        <circle cx="9" cy="3" r="2.2" fill="#d4e8ff" opacity="0.85"/>
+        <g stroke="rgba(5,5,16,0.9)" stroke-width="0.6" stroke-linejoin="round">
+          <polygon points="3.9,6.8 6.2,9 7.3,16 3.9,16 2.5,9.8" fill="url(#stxBtnGrad)"/>
+          <polygon points="14.6,8.4 15.8,11.5 14.3,16 11,16 12.7,10.4" fill="url(#stxBtnGrad)"/>
+          <polygon points="9.6,2 11.8,5.9 11,16 6.8,16 7.3,6.5" fill="url(#stxBtnGrad)"/>
+        </g>
+        <polygon points="9.6,2 7.3,6.5 6.8,16 9.3,16" fill="#ffffff" opacity="0.14"/>
+        <polygon points="14.6,8.4 12.7,10.4 11,16 12.7,16" fill="#000000" opacity="0.18"/>
+        <polygon points="3.9,6.8 2.5,9.8 3.9,16 5.3,16" fill="#000000" opacity="0.12"/>
       </svg>`;
   }
 
@@ -241,7 +258,7 @@ export class Legend {
         <span style="flex-shrink:0;width:16px;text-align:center;margin-top:1px;line-height:1;">${r.symbol}</span>
         <div style="flex:1;">
           <div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.82);margin-bottom:2px;">${r.label}</div>
-          <div style="font-size:9px;color:rgba(255,255,255,0.4);line-height:1.45;">${r.meaning}</div>
+          <div style="font-family:${PROSE};font-size:9px;color:rgba(255,255,255,0.4);line-height:1.45;">${r.meaning}</div>
         </div>
       </div>`).join('');
 
@@ -249,16 +266,16 @@ export class Legend {
     const defs = `
       <svg width="0" height="0" style="position:absolute;" aria-hidden="true">
         <defs>
-          <linearGradient id="stxLegendGrad" x1="9" y1="1" x2="9" y2="17" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="#bcd8ff"/>
-            <stop offset="0.5" stop-color="#5a7fd0"/>
-            <stop offset="1" stop-color="#1a1730"/>
+          <linearGradient id="stxLegendGrad" x1="2.8" y1="16.3" x2="15.2" y2="1.7" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#9945FF"/>
+            <stop offset="0.48" stop-color="#EB33CC"/>
+            <stop offset="0.7" stop-color="#14F195"/>
           </linearGradient>
         </defs>
       </svg>`;
 
     return `${defs}
-      <div style="font-size:10px;letter-spacing:0.3px;color:rgba(255,255,255,0.55);padding-bottom:9px;">
+      <div style="font-family:${PROSE};font-size:10px;letter-spacing:0.3px;color:rgba(255,255,255,0.55);padding-bottom:9px;">
         ${METAPHOR}
       </div>
       ${rows}`;

@@ -43,7 +43,9 @@ const VIEWPORT_MARGIN = 10;
 // Glass language, lifted from InfoOverlay/HUD so the card belongs to the piece.
 const CARD_BG = 'rgba(8,8,20,0.62)';
 const CARD_BLUR = 'blur(9px)';
-const MONO = "'SF Mono', 'Fira Code', monospace";
+const MONO = "'ABC Diatype Semi-Mono', 'SF Mono', monospace";
+// The caption is narration, not data — it speaks in the humanist brand face.
+const PROSE = "'ABC Diatype', system-ui, sans-serif";
 
 export class RingInfoLayer {
   private readonly camera: THREE.Camera;
@@ -180,7 +182,7 @@ export class RingInfoLayer {
       transform: 'translateX(-50%)',
       maxWidth: 'min(86vw, 540px)',
       textAlign: 'center',
-      fontFamily: MONO,
+      fontFamily: PROSE,
       fontSize: '13px',
       lineHeight: '1.5',
       letterSpacing: '0.4px',
