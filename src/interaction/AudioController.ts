@@ -1,10 +1,21 @@
 /**
- * Audio controller — mute/unmute toggle button.
- * Placeholder: no audio file loaded in Phase 1+2.
+ * Audio toggle — the speaker button (bottom-right) that turns on THE CHAIN'S OWN MUSIC:
+ * the Tone.js AudioEngine driven by the same live events that grow the crystal, at the
+ * default studio settings. The click IS the user gesture browsers require to start audio.
+ *
+ * The heavy engine (the tone chunk) is NOT loaded until the first enable: main.ts attaches
+ * `onFirstEnable` (dynamic import + wire the event tap + engine.start()) and `onMuteToggle`
+ * (engine.setMuted — the transport keeps running, so re-unmuting stays on the chain's beat).
  */
 export class AudioController {
   private button: HTMLButtonElement;
-  private muted = true;
+  private state: 'muted' | 'loading' | 'on' = 'muted';
+  private enabled = false; // first-enable (engine import + start) completed
+
+  /** First unmute: load + wire + start the engine (set by main.ts). May reject. */
+  onFirstEnable?: () => Promise<void>;
+  /** Subsequent toggles: mute/unmute the running engine (set by main.ts). */
+  onMuteToggle?: (muted: boolean) => void;
 
   constructor() {
     this.button = document.createElement('button');
@@ -25,20 +36,58 @@ export class AudioController {
     this.button.addEventListener('mouseleave', () => {
       this.button.style.background = 'rgba(255, 255, 255, 0.05)';
     });
-    this.button.addEventListener('click', () => this.toggle());
+    this.button.addEventListener('click', () => void this.toggle());
     this.updateIcon();
     document.body.appendChild(this.button);
   }
 
-  private toggle(): void {
-    this.muted = !this.muted;
+  private async toggle(): Promise<void> {
+    if (this.state === 'loading') return; // ignore re-clicks mid-start
+
+    if (this.state === 'on') {
+      this.state = 'muted';
+      this.updateIcon();
+      this.onMuteToggle?.(true);
+      return;
+    }
+
+    // muted → on
+    if (this.enabled) {
+      this.state = 'on';
+      this.updateIcon();
+      this.onMuteToggle?.(false);
+      return;
+    }
+
+    // First enable: the click is the gesture — load + start the engine inside it.
+    if (!this.onFirstEnable) return; // not wired (shouldn't happen)
+    this.state = 'loading';
     this.updateIcon();
-    // Audio playback will be wired in Phase 5
+    try {
+      await this.onFirstEnable();
+      this.enabled = true;
+      this.state = 'on';
+    } catch (e) {
+      console.error('[audio] enable failed', e);
+      this.state = 'muted';
+    }
+    this.updateIcon();
   }
 
   private updateIcon(): void {
-    // SVG speaker icon
-    if (this.muted) {
+    if (this.state === 'loading') {
+      this.button.title = 'Starting the sound…';
+      this.button.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="2" stroke-linecap="round">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+          <circle cx="19" cy="12" r="1.4" fill="rgba(255,255,255,0.6)" stroke="none">
+            <animate attributeName="opacity" values="0.2;1;0.2" dur="1s" repeatCount="indefinite"/>
+          </circle>
+        </svg>`;
+      return;
+    }
+    if (this.state === 'muted') {
+      this.button.title = 'Sound on: the network playing itself, live';
       this.button.innerHTML = `
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="2" stroke-linecap="round">
           <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
@@ -46,6 +95,7 @@ export class AudioController {
           <line x1="17" y1="9" x2="23" y2="15"/>
         </svg>`;
     } else {
+      this.button.title = 'Mute';
       this.button.innerHTML = `
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" stroke-width="2" stroke-linecap="round">
           <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>

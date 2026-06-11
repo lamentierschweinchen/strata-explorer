@@ -339,6 +339,12 @@ export class Strata {
     this.epochCeremony();
   }
 
+  /** The speaker toggle (bottom-right). main.ts wires its enable/mute hooks to the
+   *  chain-reactive AudioEngine — the click is the browser's required audio gesture. */
+  get audio(): AudioController {
+    return this.audioController;
+  }
+
   update(dt: number): void {
     // Pump the pacing layer first so paced real txns + synthetic particles emit this frame.
     this.engine.update(dt);
