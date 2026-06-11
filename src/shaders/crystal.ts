@@ -512,7 +512,9 @@ export function applyStemPatches(shader: PatchedShader, uniforms: ClusterUniform
       '#include <common>\n' + STEM_FRAGMENT_DECLS + GLSL_HELPERS)
     .replace('#include <clipping_planes_fragment>',
       '#include <clipping_planes_fragment>\n' + /* glsl */ `
-      float cluFade = 1.0 - smoothstep(uFadeS - 12.0, uFadeS, vCluS);
+      // Short dissolve window (was -12): most of the body stays SOLID rock; the
+      // erosion zone is carried by the dark inner core showing through the stipple.
+      float cluFade = 1.0 - smoothstep(uFadeS - 8.0, uFadeS, vCluS);
       if (cluFade < 0.999 && chash12(gl_FragCoord.xy + vec2(31.7, 11.3)) > cluFade) discard;
     `)
     .replace('#include <color_fragment>',
@@ -525,7 +527,7 @@ export function applyStemPatches(shader: PatchedShader, uniforms: ClusterUniform
       float cluMott = cfbm3(vCluLocal * 0.9) * 0.6 + cnoise3(vCluLocal * 3.7 + 11.0) * 0.4;
       vec3 cluShell = mix(uStemCol, uStemLip, cluHead * (0.45 + 0.55 * cluMott));
       // Crevices sink to deep stone shadow (baked occlusion in the botryoidal folds).
-      cluShell *= 0.42 + 0.58 * (1.0 - vCluCrev);
+      cluShell *= 0.30 + 0.70 * (1.0 - vCluCrev);
       // Granular brightness grain (fine graphite fleck), subtle and cool.
       cluShell *= 0.80 + 0.40 * cluMott;
       diffuseColor.rgb = cluShell;
@@ -555,19 +557,35 @@ export function applyStemPatches(shader: PatchedShader, uniforms: ClusterUniform
     .replace('#include <emissivemap_fragment>',
       '#include <emissivemap_fragment>\n' + /* glsl */ `
       {
-        // Cool indigo floor: the scene's ONLY lights are warm (the tip + ember point
-        // lights either back-face the outer shell or wash it amber), so without a cool
-        // self-bias the rock tans. This dim charcoal-indigo lift keeps the body reading
-        // as cool stone; the warm lights then merely KISS its ridges. Far below the 0.72
-        // bloom threshold — it grounds the rock, never glows.
-        totalEmissiveRadiance += uStemCol * vec3(0.55, 0.65, 1.0) * 0.5;
-        // The ember band: finality glowing THROUGH the shell — now a faint crevice KISS,
-        // not a wash (uStemEmber far below the former 0.30). Strongest in the folds where the
-        // backlight would leak, veined so it reads as material.
+        // Cool indigo fill — but SHAPED, never flat (a constant lift reads as a
+        // membrane lit from within; round-1's mistake). Three form terms restore mass:
+        //   facing  — bright toward the camera, falling to near-black at the
+        //             silhouette (matte rock in a dark scene goes silhouette-dark);
+        //   skyUp   — broad top-light form shading, the underside stays heavy;
+        //   creviceAO — the folds hold their shadow instead of self-glowing.
+        // Peak stays at round-1's level: far below the 0.72 bloom threshold.
+        vec3 cluVv = vViewPosition;
+        float cluVl = length(cluVv);
+        vec3 cluVdir = cluVl > 1e-4 ? cluVv / cluVl : vec3(0.0, 0.0, 1.0);
+        float cluNdV = clamp(dot(normal, cluVdir), 0.0, 1.0);
+        vec3 cluWN = inverseTransformDirection(normal, viewMatrix);
+        float cluFacing = 0.14 + 0.86 * cluNdV * cluNdV;
+        float cluSkyUp = 0.45 + 0.55 * clamp(cluWN.y * 0.85 + 0.55, 0.0, 1.0);
+        float cluAo = 1.0 - 0.78 * vCluCrev;
+        totalEmissiveRadiance += uStemCol * vec3(0.55, 0.65, 1.0) * 0.62
+          * cluFacing * cluSkyUp * cluAo * (0.60 + 0.80 * cluMott);
+        // The ember band: finality glowing THROUGH the shell — as FIRE IN THE
+        // FISSURES, never a field (a dim amber wash over dark rock is exactly the
+        // cardboard-tan read; round 2's last culprit). Quadratic crevice gate +
+        // hard-thresholded veins localize it to glowing cracks; the color leans
+        // deep orange so what survives reads as ember, not beige. Peak ≈ 0.36 —
+        // a bright crack, still far below the 0.72 bloom threshold.
         float cluEmber = exp(-pow(vCluS - uEmberS, 2.0) / max(uEmberW * uEmberW, 1.0));
-        float cluVein = 0.40 + 0.60 * cfbm3(vCluLocal * 0.55 + vec3(0.0, uTime * 0.015, 0.0));
-        totalEmissiveRadiance += uEmberCol * cluEmber * cluVein * (0.55 + 0.45 * vCluCrev)
-          * uStemEmber * (0.85 + 0.15 * uBreath);
+        cluEmber *= cluEmber; // sharper shoulders — a band, not a region
+        float cluVein = smoothstep(0.52, 0.88, cfbm3(vCluLocal * 0.55 + vec3(0.0, uTime * 0.015, 0.0)));
+        float cluCrack = 0.08 + 0.92 * vCluCrev * vCluCrev;
+        totalEmissiveRadiance += (uEmberCol * vec3(1.0, 0.62, 0.30)) * cluEmber * cluVein
+          * cluCrack * uStemEmber * (0.85 + 0.15 * uBreath) * 2.6;
         // Strike wave: a faint pulse of life racing down the shell.
         float cluWS = uStrikeT * uWaveSpeed;
         float cluWave = exp(-pow(vCluS - cluWS, 2.0) / 60.0) * exp(-uStrikeT * 2.1);
@@ -581,6 +599,111 @@ export function applyStemPatches(shader: PatchedShader, uniforms: ClusterUniform
         totalEmissiveRadiance += mix(uFamPurple, uFamMagenta, chash13(cluCell + 9.0))
           * cluSel * cluHeadZ * cluTw * 0.11;
         totalEmissiveRadiance *= cluFade;
+      }
+    `)
+    .replace('#include <lights_fragment_end>',
+      '#include <lights_fragment_end>\n' + /* glsl */ `
+      {
+        // THE TAN KILL. Every light that reaches this rock is WARM (amber ember +
+        // warm tip points inside the shell, amber-dominant env outside) — and warm
+        // light × cool dark albedo still renders TAN (R wins: 1.0×.052 > .66×.054 >
+        // .28×.078). The albedo cannot fight the hue, so the RESPONSE must: convert
+        // the lit result to luminance and re-tint it cool graphite. The form modeling
+        // (bright where lit, dark where not) survives; the cardboard hue does not.
+        // The matrix keeps amber ONLY in the controlled ember crevice kiss above.
+        vec3 cluCoolResp = vec3(0.62, 0.70, 1.00);
+        const vec3 cluLw = vec3(0.2126, 0.7152, 0.0722);
+        reflectedLight.directDiffuse = mix(
+          reflectedLight.directDiffuse,
+          dot(reflectedLight.directDiffuse, cluLw) * cluCoolResp, 0.80) * 0.62;
+        reflectedLight.indirectDiffuse = mix(
+          reflectedLight.indirectDiffuse,
+          dot(reflectedLight.indirectDiffuse, cluLw) * cluCoolResp, 0.80);
+        // And the rim goes further: grazing fresnel (F→1, ~25× facing) catches the
+        // warm env exactly at the silhouette. Real geode crust shows no bright rim —
+        // crush both speculars and dim the remaining diffuse to a COOL DARK EDGE.
+        float cluNoV = saturate(dot(geometryNormal, geometryViewDir));
+        float cluRimK = smoothstep(0.45, 0.92, 1.0 - cluNoV);
+        reflectedLight.directSpecular   *= mix(1.0, 0.05, cluRimK);
+        reflectedLight.indirectSpecular *= mix(1.0, 0.06, cluRimK);
+        reflectedLight.directDiffuse    *= mix(1.0, 0.30, cluRimK);
+        // Crevice occlusion applies to ambient light too, not just the base color.
+        float cluAoL = 1.0 - 0.70 * vCluCrev;
+        reflectedLight.indirectDiffuse  *= cluAoL;
+        reflectedLight.indirectSpecular *= cluAoL;
+      }
+    `);
+}
+
+// ---------------------------------------------------------------------------------
+// STEM CORE — the inner cavity wall (same sweep, smaller radius, inverted normals).
+// A geode shell is centimeters thick: anywhere the outer skin opens (the pinched
+// ends, the dissolve stipple at the tail) the eye must land on dark stone interior,
+// never on stars THROUGH the rock. Near-black, ultra-matte; the interior warm
+// point lights may kiss it faintly (the cavity glow of reference 3) but it never
+// approaches the 0.72 bloom threshold.
+// ---------------------------------------------------------------------------------
+const STEM_CORE_FRAGMENT_DECLS = /* glsl */ `
+  uniform float uFadeS;
+  uniform vec3 uFamPurple;
+  uniform vec3 uFamMagenta;
+  uniform vec3 uFamGreen;
+  varying vec3 vCluLocal;
+  varying float vCluS;
+  varying float vCluCrev;
+`;
+
+export function applyStemCorePatches(shader: PatchedShader, uniforms: ClusterUniforms): void {
+  Object.assign(shader.uniforms, uniforms);
+
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\n' + STEM_VERTEX_DECLS)
+    .replace('#include <project_vertex>', '#include <project_vertex>\n' + STEM_VERTEX_MAIN);
+
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>',
+      '#include <common>\n' + STEM_CORE_FRAGMENT_DECLS + GLSL_HELPERS)
+    .replace('#include <clipping_planes_fragment>',
+      '#include <clipping_planes_fragment>\n' + /* glsl */ `
+      // The core outlives the outer skin slightly (window shifted +4 along the arc,
+      // different stipple salt): erosion reveals dark stone first, THEN dissolves.
+      float cluFade = 1.0 - smoothstep(uFadeS - 4.0, uFadeS + 4.0, vCluS);
+      if (cluFade < 0.999 && chash12(gl_FragCoord.xy + vec2(7.9, 53.1)) > cluFade) discard;
+    `)
+    .replace('#include <color_fragment>',
+      '#include <color_fragment>\n' + /* glsl */ `
+      // Cavity wall: near-black stone with faint mineral grain — depth, not a void.
+      float cluCoreG = cfbm3(vCluLocal * 1.4 + 3.7);
+      diffuseColor.rgb *= (0.65 + 0.70 * cluCoreG) * (0.55 + 0.45 * (1.0 - vCluCrev));
+    `)
+    .replace('#include <normal_fragment_maps>',
+      '#include <normal_fragment_maps>\n' + /* glsl */ `
+      {
+        // Coarse grit so the warm interior kiss breaks up like rough stone, never
+        // plastic. Offset magnitude < 1 — the unit normal can't cancel (no NaN).
+        vec3 cluCg = vec3(
+          cnoise3(vCluLocal * 5.0),
+          cnoise3(vCluLocal * 5.0 + 11.0),
+          cnoise3(vCluLocal * 5.0 + 23.0)) - 0.5;
+        normal = normalize(normal + cluCg * 0.24);
+      }
+    `)
+    .replace('#include <lights_fragment_end>',
+      '#include <lights_fragment_end>\n' + /* glsl */ `
+      {
+        // The cavity is DEEP SHADOW. The amber ember light sits point-blank inside
+        // the bowl (160 cd at 2-6u → up to ~40× irradiance): raw, it washes the
+        // whole interior beige — the round-2 screenshot's cardboard bowl. Keep a
+        // dim warm trace (embers deep in rock) but crush and cool the response;
+        // the shell's real ember glow is the stem's veined crevice kiss.
+        const vec3 cluLw = vec3(0.2126, 0.7152, 0.0722);
+        vec3 cluCoolResp = vec3(0.55, 0.65, 1.00);
+        reflectedLight.directDiffuse = mix(
+          reflectedLight.directDiffuse,
+          dot(reflectedLight.directDiffuse, cluLw) * cluCoolResp, 0.60) * 0.34;
+        reflectedLight.indirectDiffuse *= 0.45;
+        reflectedLight.directSpecular   *= 0.08;
+        reflectedLight.indirectSpecular *= 0.08;
       }
     `);
 }

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  applyGemPatches, applySolidPatches, applyStemPatches,
+  applyGemPatches, applySolidPatches, applyStemCorePatches, applyStemPatches,
   type ClusterUniforms,
 } from '../shaders/crystal';
 import { flareVertexShader, flareFragmentShader } from '../shaders/flare';
@@ -85,6 +85,9 @@ export class CrystalAxis {
   private gemMeshes: THREE.InstancedMesh[] = [];
   private druzyMesh: THREE.InstancedMesh;
   private stem: THREE.Mesh;
+  /** Inner cavity wall — same sweep at ~0.78 radius, inverted normals: any opening
+   *  in the outer skin shows dark stone interior (shell THICKNESS), never space. */
+  private stemCore: THREE.Mesh;
   private coma: THREE.Points;
   private comaMat: THREE.ShaderMaterial;
   private emberLight: THREE.PointLight;
@@ -92,6 +95,7 @@ export class CrystalAxis {
   private gemMat: THREE.MeshPhysicalMaterial;
   private druzyMat: THREE.MeshPhysicalMaterial;
   private stemMat: THREE.MeshStandardMaterial;
+  private stemCoreMat: THREE.MeshStandardMaterial;
 
   /** Shared uniform record merged into every patched material (live updates). */
   private u: ClusterUniforms;
@@ -307,10 +311,21 @@ export class CrystalAxis {
       color: 0xffffff,
       metalness: 0.0,        // pure dielectric — no metallic sheen on rough stone
       roughness: 0.9,        // matte base (the shader refines roughness per-fragment)
-      envMapIntensity: 0.16, // the shared env is warm; let little of it wash the rock to tan
+      envMapIntensity: 0.08, // the shared env is warm; the shader also crushes its grazing fresnel (the tan rim)
     });
     this.stemMat.onBeforeCompile = (shader) => applyStemPatches(shader, this.u);
-    this.stemMat.customProgramCacheKey = () => 'cluster-stem-v1';
+    this.stemMat.customProgramCacheKey = () => 'cluster-stem-v2';
+
+    // Inner cavity wall: near-black ultra-matte stone. Deliberately NO envMap (the
+    // shared env is warm) — only the interior point lights may kiss it faintly.
+    this.stemCoreMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(0.012, 0.013, 0.022),
+      metalness: 0.0,
+      roughness: 1.0,
+      envMapIntensity: 0.0,
+    });
+    this.stemCoreMat.onBeforeCompile = (shader) => applyStemCorePatches(shader, this.u);
+    this.stemCoreMat.customProgramCacheKey = () => 'cluster-stem-core-v1';
 
     // ================= State arrays =================================================
     const maxSeg = this.maxSegments;
@@ -408,6 +423,15 @@ export class CrystalAxis {
     this.stem.frustumCulled = false;
     this.stem.raycast = () => { /* not a data surface */ };
     this.mesh.add(this.stem);
+
+    // Inner cavity wall (see field doc): the shell's apparent THICKNESS. Same sweep
+    // and bump field at 0.78 radius, winding inverted so its faces look inward —
+    // through any opening the eye lands on dark rock, never on stars.
+    this.stemCore = new THREE.Mesh(this.buildStemGeometry(0xa11a, 0.78, true), this.stemCoreMat);
+    this.stemCore.name = 'cluster-stem-core';
+    this.stemCore.frustumCulled = false;
+    this.stemCore.raycast = () => { /* not a data surface */ };
+    this.mesh.add(this.stemCore);
 
     // ================= Lights =======================================================
     this.tipLight = new THREE.PointLight(
@@ -529,9 +553,11 @@ export class CrystalAxis {
   private static stemRadius(s: number): number {
     const grow = THREE.MathUtils.smoothstep(s, 1, 16);   // bulk on immediately
     const swell = THREE.MathUtils.smoothstep(s, 10, 34);  // round the body out
-    const taper = 1 - 0.5 * THREE.MathUtils.smoothstep(s, 32, CONFIG.CLUSTER_FADE_S);
+    const taper = 1 - 0.42 * THREE.MathUtils.smoothstep(s, 32, CONFIG.CLUSTER_FADE_S);
     // Fat solid core so the loop's interior reads as rock, not a see-through pocket.
-    return (3.4 + 5.8 * grow + 2.8 * swell) * taper;
+    // Modestly fatter than round 1 (esp. the tail taper 0.5→0.58 of full girth):
+    // the lobes read inflated by mass, not a sagging skin. Same spine, same anchors.
+    return (4.0 + 6.2 * grow + 2.8 * swell) * taper;
   }
 
   // ================= Geometry builders ==============================================
@@ -622,8 +648,11 @@ export class CrystalAxis {
   /**
    * The botryoidal matrix stem along the spine: lumpy, rounded (smooth normals),
    * crevice-darkened, with aS / aCrev baked for the shader's zoning + ember band.
+   * `radiusScale` + `invert` build the inner cavity wall: the same sweep and the
+   * same bump field at a smaller radius, winding flipped so computed normals face
+   * INWARD — the visible interior wherever the outer skin opens or dissolves.
    */
-  private buildStemGeometry(seedNum: number): THREE.BufferGeometry {
+  private buildStemGeometry(seedNum: number, radiusScale = 1, invert = false): THREE.BufferGeometry {
     void seedNum;
     const SEGS = 20; // rounder cross-section — fewer flat low-poly facets on the silhouette
     const s0 = 0.6;
@@ -644,16 +673,19 @@ export class CrystalAxis {
       // pinch both ends so the tube reads as a grown mass, not a pipe
       const endPinch =
         THREE.MathUtils.smoothstep(f, 0, 0.035) * (1 - 0.85 * THREE.MathUtils.smoothstep(f, 0.96, 1));
-      const r0 = CrystalAxis.stemRadius(s) * Math.max(endPinch, 0.06);
+      const r0 = CrystalAxis.stemRadius(s) * radiusScale * Math.max(endPinch, 0.06);
       for (let k = 0; k < SEGS; k++) {
         const ang = (k / SEGS) * Math.PI * 2;
         const ca = Math.cos(ang), sa = Math.sin(ang);
         // Botryoidal lumps: seamless noise on the (cos, sin, s) domain — deep and
         // multi-octave so the matrix reads as rough rock, not a smooth glowing skin.
+        // Concavities are floored at -0.30 (lumps stay proud to +~0.47): rounded
+        // masses with shallow valleys — never the deep dents of a deflating skin.
         const n1 = CrystalAxis.vnoise3(ca * 1.6 + 7.3, sa * 1.6 + 2.1, s * 0.33);
         const n2 = CrystalAxis.vnoise3(ca * 3.4 + 1.7, sa * 3.4 + 9.2, s * 0.85);
         const n3 = CrystalAxis.vnoise3(ca * 6.1 + 4.4, sa * 6.1 + 5.5, s * 1.7);
-        const bump = (n1 - 0.5) * 0.66 + (n2 - 0.5) * 0.32 + (n3 - 0.5) * 0.16;
+        const bump = Math.max(
+          (n1 - 0.5) * 0.50 + (n2 - 0.5) * 0.30 + (n3 - 0.5) * 0.14, -0.30);
         const r = r0 * (1 + bump);
         const idx = i * SEGS + k;
         positions[idx * 3] = p.x + (n.x * ca + b.x * sa) * r;
@@ -666,7 +698,8 @@ export class CrystalAxis {
           const a1 = i * SEGS + ((k + 1) % SEGS);
           const b0 = (i + 1) * SEGS + k;
           const b1 = (i + 1) * SEGS + ((k + 1) % SEGS);
-          indices.push(a0, b0, a1, a1, b0, b1);
+          if (invert) indices.push(a0, a1, b0, a1, b1, b0);
+          else indices.push(a0, b0, a1, a1, b0, b1);
         }
       }
     }
@@ -1245,6 +1278,8 @@ export class CrystalAxis {
     this.druzyMat.dispose();
     this.stem.geometry.dispose();
     this.stemMat.dispose();
+    this.stemCore.geometry.dispose();
+    this.stemCoreMat.dispose();
     this.coma.geometry.dispose();
     this.comaMat.dispose();
     this.grabRT?.dispose();
