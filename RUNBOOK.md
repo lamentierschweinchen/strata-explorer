@@ -2,11 +2,32 @@
 
 Operational guide for running the piece unattended on a single gallery screen, ~10:00–20:00 CET.
 
-## The link
+## The links (pick by context)
 
-- **Production:** https://strata-explorer.vercel.app
+- **Gallery / kiosk (mouse-less):** https://strata-explorer.vercel.app/?present
+  Presentation mode: the camera flies a slow narrated cinematic loop on its own, with
+  captions naming what's on screen. THIS is the install URL.
+- **Interactive (a browser someone explores):** https://strata-explorer.vercel.app
+  Mouse orbit, hover any crystal for its real slot's info, click a validator to fly in.
 - It's a static site on Vercel + live Solana data via Helius. Just open it in a browser.
 - A page **refresh always recovers a clean state** — first thing to try if anything looks off.
+  (?present survives refresh — keep the param in the address bar.)
+
+## Sound (the two venue contexts)
+
+- **Shared multi-artwork screen:** leave it SILENT — do nothing; sound is off by default.
+- **The dedicated room (the one-hour show):** click the **speaker icon, bottom-right, once**
+  at install. That single click starts the chain's own music — kick on every block, chords on
+  leader changes, swells at finality — live and in sync with the visuals (the same events
+  drive both). Click again to mute. Set the MACHINE volume before the audience arrives.
+- Browsers refuse audio without a click, so the one tap at install is required — there is no
+  autoplay. After a page refresh, tap it again.
+
+## Keys (no mouse needed, but good to know)
+
+- **p** — toggle presentation mode on/off (if you opened the plain URL by mistake).
+- **ESC** — exit presentation mode; or, in interactive mode, fly home to the default orbit
+  (e.g. if someone clicked into a validator and walked away).
 
 ## Display setup
 
@@ -36,9 +57,11 @@ Operational guide for running the piece unattended on a single gallery screen, ~
 
 - A real epoch rollover (~every 2 days) triggers a golden ceremony: grand waves, a bloom
   swell, the epoch number igniting.
-- **Timing (measured 2026-06-10):** a real rollover lands **~Fri ~11:12 CET** (a free
-  rehearsal — have the team watch the live site) and **~Sun ~10:46 CET**. **None during the
-  Saturday 10:00–20:00 window.** Re-check Friday for a sharper estimate.
+- **Timing (re-measured Thu night, 397.7ms/slot):** epoch 985→986 lands **Friday
+  ~11:13 CEST (band 11:07–11:20)** — a free rehearsal; have the team watch the live site.
+  Next is **Sunday ~10:45**, so **none during the Saturday 10:00–20:00 window**. During the
+  show, the luminous ring at the crystal's base (the epoch clock) visibly advances from
+  roughly 48% to 69% — that ring closing IS the countdown to a ceremony.
 - **Rehearse on demand:** `https://strata-explorer.vercel.app/?ceremony` fires the full
   ceremony once, ~5s after load. Good for showing the team or testing the venue screen.
 
@@ -58,10 +81,13 @@ Operational guide for running the piece unattended on a single gallery screen, ~
   the client. If it's ever abused or rate-limited, it is rotatable in the Helius dashboard
   (then redeploy) — but for one gallery screen this won't come up.
 
-## Still in flight (as of this writing)
+## Day-of checklist (5 minutes, in order)
 
-- **Centerpiece form** — the crystal is being refined toward a denser, more beautiful mass;
-  production updates only when the owner approves. The current production build is a complete,
-  safe premiere on its own.
-- **Presentation mode** (auto-narration labels + scripted camera, fully mouse-less) — planned
-  as the finale; the camera anchors and label content are already built toward it.
+1. Power + network on the machine; sleep/screensaver/notifications OFF; not on battery.
+2. Chrome/Edge → `chrome://gpu` → hardware acceleration green.
+3. Open **https://strata-explorer.vercel.app/?present**
+4. Confirm: the slot number is climbing and the camera starts its slow narrated moves.
+5. Fullscreen (`F11` / `⌃⌘F`), park the mouse in a corner.
+6. **Room-hour only:** click the speaker icon once (bottom-right) → confirm sound,
+   set machine volume taste-level, done.
+7. Walk away. It runs itself; a refresh fixes anything.
