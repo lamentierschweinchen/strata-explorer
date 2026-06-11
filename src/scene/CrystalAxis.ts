@@ -14,11 +14,19 @@ import { COLORS } from '../utils/colors';
  * SPINE   — a fixed curved path sweeping down and behind the growth head. The
  *           whole record glides one spacing along it per slot (the 400 ms
  *           heartbeat, eased — felt as growth, not a ticker).
- * SPRAYS  — each leader (4 slots) raises one radiating spray of terminated
- *           prisms at its own azimuth, in its own Solana-hue family (purple /
- *           magenta / green — saturated, never pastel). Each produced slot
- *           nucleates ONE crystal of that spray (the first of the four is the
- *           leader's dominant blade) plus a scatter of druzy micro-crystals.
+ * FACE    — real geodes open on ONE side. Crystals and most druzy populate a
+ *           ±FACE_HALF sector around a slowly-varying face direction (faceCS —
+ *           the flank of the host rock facing open space + slightly skyward);
+ *           the far side stays bare dark stone with sparse druzy hints. The
+ *           orbit's drama is that contrast: jewel face, rock back.
+ * SPRAYS  — each leader (4 slots) claims its own patch of the face, in its own
+ *           Solana-hue family (purple / magenta / green — saturated, never
+ *           pastel). Each produced slot nucleates ONE crystal of that patch
+ *           (the first of the four is the leader's dominant blade) plus a
+ *           scatter of druzy micro-crystals. Every body is anchored ON the
+ *           shell's actual lumpy skin (anchorOnShell): base rooted in the rock,
+ *           growth axis along the local surface normal, tip free — grown FROM
+ *           the matrix, never through it.
  *           Crystals are real MeshPhysicalMaterial bodies: environment-lit,
  *           clearcoated, iridescent, REFRACTING the live scene (full-scene
  *           grab pass — stars and the amber validator cloud bend through the
@@ -123,22 +131,23 @@ export class CrystalAxis {
   private segmentBirthTime: Float32Array; // for the nucleation scale-in
   private segmentVariant: Uint8Array;     // gem habit per segment (leader-stable)
   private segmentHue: Float32Array;       // family hue per segment (describeCrystal)
-  private gemTheta: Float32Array;         // azimuth around the spine
-  private gemTilt: Float32Array;          // head-ward lean
+  private gemTheta: Float32Array;         // azimuth — FACE-RELATIVE (world = faceAngleAt(s) + this)
+  private gemTilt: Float32Array;          // lean magnitude off the local surface normal (small)
   private gemRoll: Float32Array;
   private gemLen: Float32Array;
   private gemWidX: Float32Array;
   private gemWidZ: Float32Array;
   // Flanking prisms (2 per slot, on the two unused habit meshes at the same ring):
   // the slot's deposit becomes an interlocking clump instead of a lone blade.
-  private gemFTheta: Float32Array;        // maxSegments × 2
+  private gemFTheta: Float32Array;        // maxSegments × 2 (face-relative, like gemTheta)
   private gemFLen: Float32Array;
   private gemFWid: Float32Array;
-  // Druzy micro statics (maxSegments × druzyPerSlot)
+  private gemFSOff: Float32Array;         // arc-length stagger so the clump isn't a flat fan
+  // Druzy micro statics (maxSegments × druzyPerSlot); θ face-relative, like the gems
   private dTheta: Float32Array;
   private dSOff: Float32Array;
   private dScale: Float32Array;
-  private dTilt: Float32Array;
+  private dTilt: Float32Array;            // lean off the surface normal (signed, tangential)
 
   // Per-variant instanced attributes (kept for partial re-seeding on ring reuse)
   private gemBirthAttr: THREE.InstancedBufferAttribute[] = [];
@@ -158,6 +167,24 @@ export class CrystalAxis {
   private curveB: Float32Array;
   private curveLen = 1;
   private curveDs = 1;
+
+  // --- The rock↔crystal relationship (round 3 structural contract) -----------------
+  /** Crystals populate ±FACE_HALF (rad) around the face direction; beyond it the
+   *  shell stays bare rock (sparse druzy hints only). ~210° face / ~150° back. */
+  private static readonly FACE_HALF = 1.83;
+  /** First gem rooting depth (arc-length): the lip ahead of it is fresh BARE rock,
+   *  druzy creeps in from DRUZY_MIN_S — growth reads rock → crust → crystals. */
+  private static readonly GEM_MIN_S = 2.6;
+  private static readonly DRUZY_MIN_S = 1.9;
+  // Baked shell bump field over (θ × s) — same field the skin mesh is built from,
+  // sampled per anchor every frame (bilinear; exact noise would be ~20k evals/frame).
+  private static readonly LUT_TH = 160;
+  private static readonly LUT_SS = 288;
+  private static readonly LUT_S0 = 0.6;
+  private static readonly LUT_S1 = CONFIG.CLUSTER_FADE_S + 6.6;
+  private bumpLUT: Float32Array;
+  /** Face direction per curve sample as its (N,B) components — see faceAngleAt. */
+  private faceCS: Float32Array;
 
   constructor() {
     this.mesh = new THREE.Group();
@@ -234,6 +261,61 @@ export class CrystalAxis {
         this.curveN.set([n0.x, n0.y, n0.z], i * 3);
         tmp.crossVectors(t0, n0).normalize();
         this.curveB.set([tmp.x, tmp.y, tmp.z], i * 3);
+      }
+    }
+
+    // ================= The crystal FACE ============================================
+    // Real geodes open on ONE side. Per curve sample, the face direction points
+    // away from the loop's own centroid (the flank facing open space) blended
+    // slightly skyward, projected into the cross-section plane. Stored as (N,B)
+    // components — atan2 at lookup time, so lerping never wraps through ±π.
+    {
+      const R = CrystalAxis.CURVE_RES;
+      const C = new THREE.Vector3();
+      for (let i = 0; i < R; i++) {
+        C.x += this.curvePos[i * 3];
+        C.y += this.curvePos[i * 3 + 1];
+        C.z += this.curvePos[i * 3 + 2];
+      }
+      C.multiplyScalar(1 / R);
+      this.faceCS = new Float32Array(R * 2);
+      const w = new THREE.Vector3();
+      const prev = new THREE.Vector3(0, 1, 0);
+      const t = new THREE.Vector3(), n = new THREE.Vector3(), b = new THREE.Vector3();
+      for (let i = 0; i < R; i++) {
+        t.set(this.curveT[i * 3], this.curveT[i * 3 + 1], this.curveT[i * 3 + 2]);
+        n.set(this.curveN[i * 3], this.curveN[i * 3 + 1], this.curveN[i * 3 + 2]);
+        b.set(this.curveB[i * 3], this.curveB[i * 3 + 1], this.curveB[i * 3 + 2]);
+        w.set(
+          this.curvePos[i * 3] - C.x,
+          this.curvePos[i * 3 + 1] - C.y,
+          this.curvePos[i * 3 + 2] - C.z,
+        );
+        w.addScaledVector(t, -w.dot(t));
+        if (w.lengthSq() < 1e-3) w.copy(prev);
+        w.normalize().addScaledVector(CrystalAxis._up, 0.45);
+        w.addScaledVector(t, -w.dot(t));
+        if (w.lengthSq() < 1e-3) w.copy(prev);
+        w.normalize();
+        prev.copy(w);
+        this.faceCS[i * 2] = w.dot(n);
+        this.faceCS[i * 2 + 1] = w.dot(b);
+      }
+    }
+
+    // ================= Shell bump-field LUT ========================================
+    // The skin's lump field baked over (θ × s) so every crystal anchor can find the
+    // ACTUAL rock surface each frame (bases glued to the skin — see anchorOnShell).
+    {
+      const TH = CrystalAxis.LUT_TH, SS = CrystalAxis.LUT_SS;
+      const S0 = CrystalAxis.LUT_S0, S1 = CrystalAxis.LUT_S1;
+      this.bumpLUT = new Float32Array(TH * SS);
+      for (let j = 0; j < SS; j++) {
+        const s = S0 + (S1 - S0) * (j / (SS - 1));
+        for (let i = 0; i < TH; i++) {
+          const ang = (i / TH) * Math.PI * 2;
+          this.bumpLUT[j * TH + i] = CrystalAxis.bumpRaw(Math.cos(ang), Math.sin(ang), s);
+        }
       }
     }
 
@@ -346,6 +428,7 @@ export class CrystalAxis {
     this.gemFTheta = new Float32Array(maxSeg * 2);
     this.gemFLen = new Float32Array(maxSeg * 2);
     this.gemFWid = new Float32Array(maxSeg * 2);
+    this.gemFSOff = new Float32Array(maxSeg * 2);
     this.dTheta = new Float32Array(maxSeg * K);
     this.dSOff = new Float32Array(maxSeg * K);
     this.dScale = new Float32Array(maxSeg * K);
@@ -560,6 +643,107 @@ export class CrystalAxis {
     return (4.0 + 6.2 * grow + 2.8 * swell) * taper;
   }
 
+  /** End-pinch factor of the shell sweep — MUST mirror buildStemGeometry exactly. */
+  private static pinchAt(s: number): number {
+    const s0 = 0.6;
+    const s1 = CONFIG.CLUSTER_FADE_S + 6;
+    const f = (s - s0) / (s1 - s0);
+    const p =
+      THREE.MathUtils.smoothstep(f, 0, 0.035) * (1 - 0.85 * THREE.MathUtils.smoothstep(f, 0.96, 1));
+    return Math.max(p, 0.06);
+  }
+
+  /**
+   * The shell's botryoidal bump field — THE single source of truth: the skin mesh,
+   * the inner cavity wall, the bump LUT and (through it) every crystal anchor
+   * sample exactly this. (ca, sa) = cos/sin of the cross-section angle in the N/B
+   * frame at arc-length s. Concavities floored at −0.30 (lumps proud to +~0.47).
+   */
+  private static bumpRaw(ca: number, sa: number, s: number): number {
+    const n1 = CrystalAxis.vnoise3(ca * 1.6 + 7.3, sa * 1.6 + 2.1, s * 0.33);
+    const n2 = CrystalAxis.vnoise3(ca * 3.4 + 1.7, sa * 3.4 + 9.2, s * 0.85);
+    const n3 = CrystalAxis.vnoise3(ca * 6.1 + 4.4, sa * 6.1 + 5.5, s * 1.7);
+    return Math.max((n1 - 0.5) * 0.50 + (n2 - 0.5) * 0.30 + (n3 - 0.5) * 0.14, -0.30);
+  }
+
+  /** Baked bump field lookup (bilinear, θ wraps, s clamps to the sweep range). */
+  private bumpAt(theta: number, s: number): number {
+    const TH = CrystalAxis.LUT_TH, SS = CrystalAxis.LUT_SS;
+    let u = (theta / (Math.PI * 2)) * TH;
+    u -= Math.floor(u / TH) * TH;
+    if (u < 0) u += TH;
+    const v =
+      THREE.MathUtils.clamp((s - CrystalAxis.LUT_S0) / (CrystalAxis.LUT_S1 - CrystalAxis.LUT_S0), 0, 1) *
+      (SS - 1.001);
+    const i0 = Math.floor(u), j0 = Math.floor(v);
+    const fu = u - i0, fv = v - j0;
+    const i1 = (i0 + 1) % TH;
+    const a = j0 * TH, b = (j0 + 1) * TH;
+    const r0 = this.bumpLUT[a + i0] * (1 - fu) + this.bumpLUT[a + i1] * fu;
+    const r1 = this.bumpLUT[b + i0] * (1 - fu) + this.bumpLUT[b + i1] * fu;
+    return r0 + (r1 - r0) * fv;
+  }
+
+  /** Face-center angle (rad, in the N/B cross-section frame) at arc-length s. */
+  private faceAngleAt(s: number): number {
+    const R = CrystalAxis.CURVE_RES;
+    const fIdx = THREE.MathUtils.clamp(s / this.curveDs, 0, R - 1.001);
+    const i0 = Math.floor(fIdx);
+    const f = fIdx - i0;
+    const a = i0 * 2;
+    const cN = this.faceCS[a] + (this.faceCS[a + 2] - this.faceCS[a]) * f;
+    const cB = this.faceCS[a + 1] + (this.faceCS[a + 3] - this.faceCS[a + 1]) * f;
+    return Math.atan2(cB, cN);
+  }
+
+  /**
+   * THE structural contract of the rock↔crystal relationship: every crystal body
+   * — gem or druzy grain — is anchored ON the shell's actual lumpy skin. Base =
+   * the skin point at (s, faceAngle(s)+thOff), pulled `embed` units under the
+   * surface (capped so lip roots never reach the inner cavity wall); growth axis
+   * = the LOCAL SURFACE NORMAL (radial minus the skin's angular and axial slopes,
+   * finite-differenced from the same bump field the rock mesh is built from)
+   * blended with a small stable lean (leanTh tangential, leanT along the spine).
+   * Bases rooted, shafts outward, tips free — rock and crystal are one specimen.
+   */
+  private anchorOnShell(
+    s: number, thOff: number, leanTh: number, leanT: number, embed: number,
+    outPos: THREE.Vector3, outDir: THREE.Vector3,
+  ): void {
+    const P = CrystalAxis._p, T = CrystalAxis._t, N = CrystalAxis._n, B = CrystalAxis._b;
+    this.frameAt(s, P, T, N, B);
+    const thW = this.faceAngleAt(s) + thOff;
+    const ct = Math.cos(thW), st = Math.sin(thW);
+    // Radial and tangential basis of the cross-section at thW
+    const rx = N.x * ct + B.x * st, ry = N.y * ct + B.y * st, rz = N.z * ct + B.z * st;
+    const tx = B.x * ct - N.x * st, ty = B.y * ct - N.y * st, tz = B.z * ct - N.z * st;
+    const bump = this.bumpAt(thW, s);
+    const r = CrystalAxis.stemRadius(s) * CrystalAxis.pinchAt(s) * (1 + bump);
+    // Skin slopes around the anchor (finite differences on the baked field)
+    const dBdTh = (this.bumpAt(thW + 0.35, s) - this.bumpAt(thW - 0.35, s)) / 0.7;
+    const rUp =
+      CrystalAxis.stemRadius(s + 0.5) * CrystalAxis.pinchAt(s + 0.5) * (1 + this.bumpAt(thW, s + 0.5));
+    const rDn =
+      CrystalAxis.stemRadius(s - 0.5) * CrystalAxis.pinchAt(s - 0.5) * (1 + this.bumpAt(thW, s - 0.5));
+    // Normal ∝ R̂ − (∂r/r∂θ)Θ̂ − (∂r/∂s)T̂ — softened ×0.6 and clamped to ±0.55
+    // (~29°) so lump shoulders tilt crystals naturally but never lay one along
+    // the wall (a shaft within ~30° of radial cannot re-enter the shell).
+    const kTh = THREE.MathUtils.clamp(
+      -0.6 * dBdTh / Math.max(1 + bump, 0.25) + leanTh, -0.55, 0.55);
+    const kT = THREE.MathUtils.clamp(-0.6 * (rUp - rDn) + leanT, -0.55, 0.55);
+    outDir.set(
+      rx + tx * kTh + T.x * kT,
+      ry + ty * kTh + T.y * kT,
+      rz + tz * kTh + T.z * kT,
+    ).normalize();
+    const e = Math.min(embed, 0.35 * r);
+    outPos.set(
+      P.x + rx * r - outDir.x * e,
+      P.y + ry * r - outDir.y * e,
+      P.z + rz * r - outDir.z * e,
+    );
+  }
+
   // ================= Geometry builders ==============================================
 
   /**
@@ -654,7 +838,10 @@ export class CrystalAxis {
    */
   private buildStemGeometry(seedNum: number, radiusScale = 1, invert = false): THREE.BufferGeometry {
     void seedNum;
-    const SEGS = 20; // rounder cross-section — fewer flat low-poly facets on the silhouette
+    // 28 angular segments: the polygonized skin tracks the analytic bump field
+    // closely enough (~0.2u chord sag) that surface-anchored crystal bases never
+    // visibly hover over it. Round 2 went 20 for roundness; same intent, finer.
+    const SEGS = 28;
     const s0 = 0.6;
     const s1 = CONFIG.CLUSTER_FADE_S + 6;
     const RINGS = 96;
@@ -678,14 +865,10 @@ export class CrystalAxis {
         const ang = (k / SEGS) * Math.PI * 2;
         const ca = Math.cos(ang), sa = Math.sin(ang);
         // Botryoidal lumps: seamless noise on the (cos, sin, s) domain — deep and
-        // multi-octave so the matrix reads as rough rock, not a smooth glowing skin.
-        // Concavities are floored at -0.30 (lumps stay proud to +~0.47): rounded
-        // masses with shallow valleys — never the deep dents of a deflating skin.
-        const n1 = CrystalAxis.vnoise3(ca * 1.6 + 7.3, sa * 1.6 + 2.1, s * 0.33);
-        const n2 = CrystalAxis.vnoise3(ca * 3.4 + 1.7, sa * 3.4 + 9.2, s * 0.85);
-        const n3 = CrystalAxis.vnoise3(ca * 6.1 + 4.4, sa * 6.1 + 5.5, s * 1.7);
-        const bump = Math.max(
-          (n1 - 0.5) * 0.50 + (n2 - 0.5) * 0.30 + (n3 - 0.5) * 0.14, -0.30);
+        // multi-octave so the matrix reads as rough rock, not a smooth glowing
+        // skin. bumpRaw is the shared field: crystal anchors sample the SAME
+        // lumps (via the LUT), so bases sit exactly on this skin.
+        const bump = CrystalAxis.bumpRaw(ca, sa, s);
         const r = r0 * (1 + bump);
         const idx = i * SEGS + k;
         positions[idx * 3] = p.x + (n.x * ca + b.x * sa) * r;
@@ -861,12 +1044,17 @@ export class CrystalAxis {
     const ring = birth % this.maxSegments;
     const rng = CrystalAxis.mulberry32(birth * 2654435761 + 1013904223);
 
-    // Leader-stable family values (azimuth, hue, habit) — the spray identity.
+    // Leader-stable family values (face patch, hue, habit) — the spray identity.
     const slotForPhase = slot ?? birth;
     const leaderOrdinal = Math.floor(slotForPhase / CONFIG.LEADER_SLOTS);
     const slotInLeader = ((slotForPhase % CONFIG.LEADER_SLOTS) + CONFIG.LEADER_SLOTS) % CONFIG.LEADER_SLOTS;
     const lrng = CrystalAxis.mulberry32(leaderOrdinal * 747796405 + 2891336453);
-    const azimuth = leaderOrdinal * 2.39996 + (lrng() - 0.5) * 0.5;
+    // Leaders fill the crystal FACE by golden-ratio steps — low-discrepancy, so
+    // consecutive leaders land far apart and the hue families interleave across
+    // the face. All θ here are FACE-RELATIVE (world = faceAngleAt(s) + θ).
+    const sectorOff =
+      (((leaderOrdinal * 0.61803398875) % 1) - 0.5) * (2 * CrystalAxis.FACE_HALF * 0.80) +
+      (lrng() - 0.5) * 0.18;
     const famPick = lrng();
     let hue: number; // family anchor on the Solana axis: 0 green · 0.5 magenta · 1 purple
     if (famPick < 0.45) hue = 0.80 + 0.18 * lrng();
@@ -878,25 +1066,34 @@ export class CrystalAxis {
     const dominant = slotInLeader === 0;
     this.segmentVariant[ring] = variant;
     this.segmentHue[ring] = hue;
-    // Fan the leader's four slots across a WIDE arc (not a tight stripe) so
-    // neighbouring leaders' deposits overlap and fill the cross-section — packed
-    // crystal, not see-through golden-angle stripes.
-    this.gemTheta[ring] = azimuth + (slotInLeader - 1.5) * 0.8 + (rng() - 0.5) * 0.42;
-    this.gemTilt[ring] = 0.18 + 0.62 * rng();
+    // Fan the leader's four slots across its patch; a soft fold reflects anything
+    // that would leak past the sector rim back inside — the back stays bare rock.
+    const foldLim = CrystalAxis.FACE_HALF * 0.94;
+    const fold = (x: number): number => {
+      let vv = x;
+      if (vv > foldLim) vv = 2 * foldLim - vv;
+      else if (vv < -foldLim) vv = -2 * foldLim - vv;
+      return THREE.MathUtils.clamp(vv, -foldLim, foldLim);
+    };
+    this.gemTheta[ring] = fold(sectorOff + (slotInLeader - 1.5) * 0.32 + (rng() - 0.5) * 0.30);
+    // Lean: a small stable deviation from the local surface normal (the normal
+    // itself — radial + skin slopes — is computed per frame in anchorOnShell).
+    this.gemTilt[ring] = 0.06 + 0.22 * rng();
     this.gemRoll[ring] = rng() * Math.PI * 2;
-    // Chunky terminated prisms, bigger + wider so they interlock and overlap into a
-    // mass rather than sprinkle; the leader's first slot stays the dominant blade.
-    this.gemLen[ring] = (8.5 + 4.5 * rng()) * (dominant ? 1.45 : 1.0);
-    this.gemWidX[ring] = (3.1 + 1.8 * rng()) * (dominant ? 1.3 : 1.0);
-    this.gemWidZ[ring] = (3.1 + 1.8 * rng()) * (dominant ? 1.3 : 1.0);
-    // Two flanking prisms splay WIDE around the main blade — they tile the azimuthal
-    // gaps so the crust reads continuous. Same slot, same family; on the two habit
-    // meshes the main crystal doesn't use.
+    // Chunky terminated prisms; now that bases sit ON the skin (not 16–76% buried)
+    // the visible shaft is most of the body — trimmed vs round 2 so the crust
+    // keeps the same visual mass. The leader's first slot stays the dominant blade.
+    this.gemLen[ring] = (7.0 + 3.6 * rng()) * (dominant ? 1.45 : 1.0);
+    this.gemWidX[ring] = (2.7 + 1.5 * rng()) * (dominant ? 1.3 : 1.0);
+    this.gemWidZ[ring] = (2.7 + 1.5 * rng()) * (dominant ? 1.3 : 1.0);
+    // Two flanking prisms around the main blade, staggered in azimuth AND along
+    // the spine — the slot's deposit is a rooted clump on the crust, not a fan.
     for (let f = 0; f < 2; f++) {
       const i = ring * 2 + f;
-      this.gemFTheta[i] = this.gemTheta[ring] + (f === 0 ? -1 : 1) * (0.7 + 0.7 * rng());
-      this.gemFLen[i] = this.gemLen[ring] * (0.6 + 0.34 * rng());
-      this.gemFWid[i] = (this.gemWidX[ring] + this.gemWidZ[ring]) * 0.5 * (0.68 + 0.3 * rng());
+      this.gemFTheta[i] = fold(this.gemTheta[ring] + (f === 0 ? -1 : 1) * (0.30 + 0.38 * rng()));
+      this.gemFSOff[i] = (f === 0 ? -1 : 1) * (0.45 + 0.75 * rng());
+      this.gemFLen[i] = this.gemLen[ring] * (0.55 + 0.30 * rng());
+      this.gemFWid[i] = (this.gemWidX[ring] + this.gemWidZ[ring]) * 0.5 * (0.62 + 0.28 * rng());
     }
 
     // Metadata (ring-buffered; hover feature)
@@ -919,14 +1116,34 @@ export class CrystalAxis {
       this.gemMissedAttr[g].needsUpdate = true;
     }
 
-    // Druzy deposit: a scatter of micro-crystals around the slot's azimuth sector.
-    // A missed slot leaves a sparse pocket of dark cinders — the vacancy.
+    // Druzy deposit — the CONTACT that sells "grown from", in three roles:
+    //   k < 14  COLLAR — a crust ring hugging the clump's bases (rides with the
+    //           gems' rooting point; for a missed slot these are the stunted dark
+    //           cinders marking the vacancy).
+    //   k < 22  FIELD  — thinner glitter across the face sector, biased slightly
+    //           head-ward: the crust visibly precedes the crystals at the lip.
+    //   rest    BACK HINT — sparse small grains past the sector rim, so the bare
+    //           rock back still carries faint mineral glitter (never a crust).
     for (let k = 0; k < K; k++) {
       const i = ring * K + k;
-      this.dTheta[i] = azimuth + (rng() - 0.5) * 3.4; // wide — a glitter field wrapping the whole cross-section
-      this.dSOff[i] = (rng() - 0.5) * 3.6; // absolute spread — independent of slot spacing
-      this.dTilt[i] = 0.15 + 0.5 * rng();
-      let sc = 1.8 + 2.6 * rng();
+      let sc: number;
+      if (k < 14) {
+        this.dTheta[i] = this.gemTheta[ring] + (rng() - 0.5) * 1.3;
+        this.dSOff[i] = (rng() - 0.5) * 1.7;
+        sc = 1.6 + 2.2 * rng();
+      } else if (k < 22) {
+        this.dTheta[i] = (rng() - 0.5) * 2 * (CrystalAxis.FACE_HALF * 0.92);
+        this.dSOff[i] = (rng() - 0.5) * 4.4 - 0.5;
+        sc = 1.5 + 2.0 * rng();
+      } else {
+        // Back hints stay SMALL and SPARSE — faint mineral glitter on dark rock,
+        // never bright chips that read as floating against the unlit back.
+        const side = rng() < 0.5 ? -1 : 1;
+        this.dTheta[i] = side * CrystalAxis.FACE_HALF * (1.02 + 0.9 * rng());
+        this.dSOff[i] = (rng() - 0.5) * 5.0;
+        sc = rng() < 0.6 ? 0 : 0.8 + 0.9 * rng();
+      }
+      this.dTilt[i] = (rng() - 0.5) * 0.55;
       if (missed) sc *= k % 2 === 0 ? 0.6 : 0; // sparse, stunted
       this.dScale[i] = sc;
       this.dBirthAttr.setX(i, birth);
@@ -1025,13 +1242,13 @@ export class CrystalAxis {
   }
 
   /**
-   * CPU instance pass: place every live crystal + druzy grain along the spine
-   * (glide, leader-spray azimuth, head-ward lean, nucleation scale-in). CPU-side
-   * so rendered transforms are exactly what the raycaster sees (hover feature).
+   * CPU instance pass: glue every live crystal + druzy grain to the SHELL'S SKIN
+   * (anchorOnShell — bases rooted in the rock, growth along the local surface
+   * normal, tips free; the face sector carries the crust, the back stays bare).
+   * CPU-side so rendered transforms are exactly what the raycaster sees (hover).
    */
   private updateInstances(): void {
     const K = this.druzyPerSlot;
-    const P = CrystalAxis._p, T = CrystalAxis._t, N = CrystalAxis._n, B = CrystalAxis._b;
     const dir = CrystalAxis._dir, pos = CrystalAxis._pos, scl = CrystalAxis._scl;
     const q = CrystalAxis._q, qR = CrystalAxis._qRoll, m = CrystalAxis._m;
     const up = CrystalAxis._up;
@@ -1059,8 +1276,11 @@ export class CrystalAxis {
         continue;
       }
 
-      this.frameAt(sBase, P, T, N, B);
-      const stemR = CrystalAxis.stemRadius(sBase);
+      // Gems root no closer to the head than GEM_MIN_S — the strip of shell in
+      // front of the first crystals stays fresh BARE rock (druzy creeps a little
+      // further forward, to DRUZY_MIN_S): the growth story, front to back. While
+      // sBase < GEM_MIN_S the newborn waits ON the lip until the glide carries it.
+      const gemRootS = Math.max(sBase, CrystalAxis.GEM_MIN_S);
 
       // Nucleation scale-in with a gentle overshoot — condensation, not a pop.
       const lived = this.timeAcc - this.segmentBirthTime[ring];
@@ -1079,55 +1299,48 @@ export class CrystalAxis {
       const lenTaper = 1 - 0.28 * rootK;
       const widTaper = 1 - 0.10 * rootK;
 
-      // --- The slot's crystal clump: main blade + two flankers (none for a
-      // missed slot — the vacancy) ---
+      // --- The slot's crystal clump: main blade + two flankers, every base ON
+      // the shell's skin (none for a missed slot — the vacancy) ---
       let fi = 0;
       for (let g = 0; g < 3; g++) {
         if (missed) {
           this.gemMeshes[g].setMatrixAt(ring, CrystalAxis._zeroM);
           continue;
         }
-        let th: number, tilt: number, roll: number, lx: number, ly: number, lz: number;
+        let thOff: number, lean: number, roll: number;
+        let lx: number, ly: number, lz: number, sg: number;
         if (g === v) {
-          th = this.gemTheta[ring];
-          tilt = this.gemTilt[ring];
+          thOff = this.gemTheta[ring];
+          lean = this.gemTilt[ring];
           roll = this.gemRoll[ring];
           lx = this.gemWidX[ring]; ly = this.gemLen[ring]; lz = this.gemWidZ[ring];
+          sg = gemRootS;
         } else {
           const i = ring * 2 + fi;
-          th = this.gemFTheta[i];
-          tilt = this.gemTilt[ring] * (0.75 + 0.5 * fi);
+          thOff = this.gemFTheta[i];
+          lean = this.gemTilt[ring] * (0.8 + 0.4 * fi);
           roll = this.gemRoll[ring] + 2.1 * (fi + 1);
           lx = this.gemFWid[i]; ly = this.gemFLen[i]; lz = this.gemFWid[i];
+          sg = Math.max(gemRootS + this.gemFSOff[i], CrystalAxis.GEM_MIN_S - 0.25);
           fi++;
         }
-        const ct = Math.cos(th), st = Math.sin(th);
-        dir.set(
-          N.x * ct + B.x * st - T.x * tilt,
-          N.y * ct + B.y * st - T.y * tilt,
-          N.z * ct + B.z * st - T.z * tilt,
-        );
-        const dl = dir.length();
-        if (dl > 1e-5) dir.multiplyScalar(1 / dl); else dir.set(0, 1, 0);
-        // Stagger the root depth per crystal so the deposit packs a THICK shell —
-        // some buried in the matrix, some proud — instead of a thin, see-through
-        // single-radius sleeve (a stable hash off the crystal's own azimuth).
-        const rh = Math.sin(th * 12.9898 + ring * 0.137) * 43758.5453;
-        const radF = 0.16 + 0.6 * (rh - Math.floor(rh));
-        pos.set(
-          P.x + dir.x * stemR * radF,
-          P.y + dir.y * stemR * radF,
-          P.z + dir.z * stemR * radF,
-        );
+        const sclY = ly * grow * lenTaper;
+        // Stable per-piece lean split into tangential/axial parts (slight constant
+        // head-ward bias — young crystals reach over the fresh lip) + embed depth:
+        // the base sits 10–18% of the shaft UNDER the skin, the tip stays free.
+        const leanTh = lean * Math.cos(roll * 1.7 + 1.3);
+        const leanT = lean * Math.sin(roll * 2.3) - 0.06;
+        const embed = (0.10 + 0.08 * (roll - Math.floor(roll))) * sclY + 0.18;
+        this.anchorOnShell(sg, thOff, leanTh, leanT, embed, pos, dir);
         q.setFromUnitVectors(up, dir);
         qR.setFromAxisAngle(up, roll);
         q.multiply(qR);
-        scl.set(lx * grow * widTaper, ly * grow * lenTaper, lz * grow * widTaper);
+        scl.set(lx * grow * widTaper, sclY, lz * grow * widTaper);
         m.compose(pos, q, scl);
         this.gemMeshes[g].setMatrixAt(ring, m);
       }
 
-      // --- The slot's druzy deposit ---
+      // --- The slot's druzy deposit: same skin contract, ~22% embedded ---
       for (let k = 0; k < K; k++) {
         const i = ring * K + k;
         const sc = this.dScale[i];
@@ -1135,23 +1348,20 @@ export class CrystalAxis {
           this.druzyMesh.setMatrixAt(i, CrystalAxis._zeroM);
           continue;
         }
-        const th = this.dTheta[i];
-        const ct = Math.cos(th), st = Math.sin(th);
-        dir.set(
-          N.x * ct + B.x * st - T.x * this.dTilt[i],
-          N.y * ct + B.y * st - T.y * this.dTilt[i],
-          N.z * ct + B.z * st - T.z * this.dTilt[i],
+        // Collar grains ride with their clump's rooting point; field/back grains
+        // ride the slot itself (and may creep ahead of the gems, never past
+        // DRUZY_MIN_S — the bare-lip strip stays bare).
+        const sK = Math.max(
+          (k < 14 ? gemRootS : sBase) + this.dSOff[i],
+          CrystalAxis.DRUZY_MIN_S,
         );
-        const dl = dir.length();
-        if (dl > 1e-5) dir.multiplyScalar(1 / dl); else dir.set(0, 1, 0);
-        const so = this.dSOff[i];
-        pos.set(
-          P.x + T.x * so + dir.x * stemR * 0.42,
-          P.y + T.y * so + dir.y * stemR * 0.42,
-          P.z + T.z * so + dir.z * stemR * 0.42,
-        );
-        q.setFromUnitVectors(up, dir);
         const s = sc * grow;
+        const leanT = Math.sin(this.dTheta[i] * 7.31 + k * 1.7) * 0.26;
+        // ~1/3 of the grain under the skin + a constant sink covering the chordal
+        // gap between the analytic field and the polygonized mesh — grains may
+        // never hover, only crust.
+        this.anchorOnShell(sK, this.dTheta[i], this.dTilt[i], leanT, 0.34 * s + 0.22, pos, dir);
+        q.setFromUnitVectors(up, dir);
         scl.set(s, s, s);
         m.compose(pos, q, scl);
         this.druzyMesh.setMatrixAt(i, m);
