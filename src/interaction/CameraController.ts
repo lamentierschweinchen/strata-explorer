@@ -14,8 +14,9 @@ export class CameraController {
   private orbitAngle = Math.PI / 4; // Start at 45°
   private inactivityTimer: number | null = null;
 
-  // Zoom animation state
+  // Zoom animation state (shared by the validator zoom-in and the ESC return flight)
   private zooming = false;
+  private returningToOrbit = false; // true while flying back to the idle orbit (ESC)
   private zoomElapsed = 0;
   private zoomDuration = 1.2;
   private zoomStartPos = new THREE.Vector3();
@@ -54,6 +55,7 @@ export class CameraController {
     const interruptZoom = () => {
       if (this.zooming) {
         this.zooming = false;
+        this.returningToOrbit = false;
         this.controls.enabled = true;
         this.resetInactivityTimer();
       }
@@ -72,11 +74,50 @@ export class CameraController {
     }, CONFIG.AUTO_ORBIT_DELAY * 1000);
   }
 
+  /** The camera's current look-at — the subject of every mode (idle centroid, a zoomed
+   *  validator, a presentation anchor). The DoF focal plane tracks this. Read-only use. */
+  get lookTarget(): THREE.Vector3 {
+    return this.controls.target;
+  }
+
+  /**
+   * ESC hatch: fly smoothly back to the default idle orbit from wherever the user got
+   * stuck (typically zoomed onto a validator). Re-enters the orbit at the camera's
+   * CURRENT azimuth around the framing target and pre-seeds orbitAngle to match, so the
+   * loop resumes from exactly where the flight lands — a seamless glide, never a snap.
+   * No-op while the presentation director owns the camera.
+   */
+  returnToOrbit(): void {
+    if (this.scripted) return;
+    this.zooming = true;
+    this.returningToOrbit = true;
+    this.zoomElapsed = 0;
+    this.zoomDuration = 1.6; // a touch slower than the zoom-in — a calm release
+    this.controls.enabled = false;
+
+    this.zoomStartPos.copy(this.camera.position);
+    this.zoomStartTarget.copy(this.controls.target);
+
+    const az = Math.atan2(
+      this.camera.position.z - this.framingTarget.z,
+      this.camera.position.x - this.framingTarget.x,
+    );
+    this.orbitAngle = az;
+    this.zoomEndTarget.copy(this.framingTarget);
+    this.zoomEndPos.set(
+      this.framingTarget.x + Math.cos(az) * CONFIG.ORBIT_RADIUS,
+      CONFIG.ORBIT_HEIGHT_Y + Math.sin(az * 0.3) * CONFIG.ORBIT_HEIGHT_DRIFT,
+      this.framingTarget.z + Math.sin(az) * CONFIG.ORBIT_RADIUS,
+    );
+  }
+
   /** Smoothly zoom camera to focus on a validator position */
   zoomToValidator(validatorPos: THREE.Vector3): void {
     this.autoOrbit = false;
     this.zooming = true;
+    this.returningToOrbit = false;
     this.zoomElapsed = 0;
+    this.zoomDuration = 1.2;
 
     this.controls.enabled = false;
 
@@ -225,7 +266,18 @@ export class CameraController {
       if (t >= 1.0) {
         this.zooming = false;
         this.controls.enabled = true;
-        this.resetInactivityTimer();
+        if (this.returningToOrbit) {
+          // The ESC flight lands ON the orbit ring at the pre-seeded angle: hand
+          // straight to the idle loop (no 15s wait), continuing without a seam.
+          this.returningToOrbit = false;
+          this.autoOrbit = true;
+          if (this.inactivityTimer !== null) {
+            clearTimeout(this.inactivityTimer);
+            this.inactivityTimer = null;
+          }
+        } else {
+          this.resetInactivityTimer();
+        }
       }
 
       this.controls.update();

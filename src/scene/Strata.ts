@@ -53,11 +53,21 @@ export class Strata {
   private presentationDirector: PresentationDirector; // mouse-less gallery cinema (?present / press 'p')
   private presenting = false;                          // mirrors the director's active state
   // 'p' toggles presentation mode (runthroughs); the gallery kiosk launches it via the ?present param.
+  // ESC is the universal way back: out of presentation, or out of a stuck validator
+  // zoom and home to the default orbit loop (a smooth flight, never a snap).
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (e.key === 'p' || e.key === 'P') {
       if (this.presentationDirector.active) this.presentationDirector.stop();
       else this.presentationDirector.start();
       this.syncPresentationMode();
+    } else if (e.key === 'Escape') {
+      if (this.presentationDirector.active) {
+        this.presentationDirector.stop();
+        this.syncPresentationMode();
+      } else {
+        this.cameraController.returnToOrbit();
+      }
+      this.tooltip.hide();
     }
   };
 
@@ -372,6 +382,9 @@ export class Strata {
     this.transactionPool.update(dt);
     this.background.update(dt);
     this.starfield.update(dt); // DESIGN LANE: twinkle the far star-shell
+    // Autofocus: the focal plane rides the camera's live look-at, so the framed subject
+    // (idle centroid / zoomed validator / presentation anchor) is always the sharp one.
+    this.postProcessing.setFocusTarget(this.cameraController.lookTarget);
     this.postProcessing.update(dt);
     this.hud.update(dt);
     this.infoOverlay.update(dt, this.camera, this.renderer.domElement);

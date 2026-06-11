@@ -117,6 +117,17 @@ export class PostProcessing {
     this.bloomBoost = Math.max(this.bloomBoost, amount);
   }
 
+  /**
+   * The world point the focal plane sits on. The orchestrator feeds the camera's live
+   * look-at every frame, so whatever the camera frames is sharp — the idle centroid, a
+   * zoomed validator, a presentation anchor. (Previously a static head-axis point: as
+   * the orbit cycled, the distance error oscillated and the crystal drifted in and out
+   * of focus — the "blurry, then clear" artifact.)
+   */
+  setFocusTarget(p: THREE.Vector3): void {
+    this.focusTarget.copy(p);
+  }
+
   update(dt: number): void {
     this.filmGrainPass.uniforms.uTime.value += dt;
 
