@@ -13,14 +13,20 @@ export const COLORS = {
   TX_NFT: new THREE.Color(0.85, 0.4, 1.0),            // purple
   TX_STAKE: new THREE.Color(0.3, 1.0, 0.6),           // green
 
-  // Crystal axis — faceted quartz with amethyst color zoning: glowing icy tip →
-  // saturated violet body → deep indigo bedrock, with amber veil inclusions inside
-  // (the same gold family as the validator cloud, so the gem belongs to its scene).
-  CRYSTAL_CORE: new THREE.Color(0.85, 0.92, 1.05),    // cool hot-white core (slightly >1 to bloom)
-  CRYSTAL_YOUNG: new THREE.Color(0.46, 0.68, 1.0),    // icy blue (newest, glowing, translucent)
-  CRYSTAL_SETTING: new THREE.Color(0.44, 0.28, 0.80), // amethyst violet (mid, crystallizing)
-  CRYSTAL_OLD: new THREE.Color(0.10, 0.08, 0.19),     // deep indigo bedrock (finalized, opaque)
-  CRYSTAL_AMBER: new THREE.Color(1.0, 0.70, 0.32),    // internal amber veils / inclusions
+  // Crystalline cluster — saturated jewel hues on the Solana brand axis (REFERENCES.md
+  // reference 1): per-leader families of purple / magenta / green gem material, all
+  // converging through deep violet into dark matrix as they finalize, with the amber
+  // ember band (reference 3) burning at the finality depth.
+  CRYSTAL_CORE: new THREE.Color(0.88, 0.86, 1.06),    // violet-white hot core (slightly >1 to bloom)
+  CRYSTAL_PURPLE: new THREE.Color(0.600, 0.271, 1.0), // Solana purple #9945FF — family anchor
+  CRYSTAL_MAGENTA: new THREE.Color(0.92, 0.20, 0.80), // magenta between the brand poles
+  CRYSTAL_GREEN: new THREE.Color(0.078, 0.945, 0.584),// Solana green #14F195 — family anchor
+  CRYSTAL_YOUNG: new THREE.Color(0.60, 0.40, 1.0),    // generic young-gem violet (coma/legend tint)
+  CRYSTAL_SETTING: new THREE.Color(0.36, 0.20, 0.66), // deep violet (mid, crystallizing)
+  CRYSTAL_OLD: new THREE.Color(0.072, 0.060, 0.118),  // dark indigo matrix (finalized, quiet)
+  CRYSTAL_AMBER: new THREE.Color(1.0, 0.66, 0.28),    // the burning ember band / inner warmth
+  // Leader thread — the luminous filament carrying each slot's light to the nucleus
+  THREAD_GOLD: new THREE.Color(1.0, 0.80, 0.42),      // warm validator gold, softer than tracer amber
 
   // Seismic waves
   WAVE_COLOR: new THREE.Color(0.8, 0.7, 0.5),         // warm subtle

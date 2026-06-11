@@ -267,6 +267,8 @@ export class Strata {
     }
 
     // Update all visual subsystems
+    // Keep the idle camera framed on the cluster's live ember-lit centroid.
+    this.cameraController.setFramingTarget(this.crystalAxis.getFramingAnchors().brightCentroid);
     this.cameraController.update(dt);
     this.raycaster.update(this.camera);
     this.crystalAxis.update(dt);

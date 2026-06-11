@@ -124,15 +124,19 @@ export class InfoOverlay {
     this.hud.appendChild(this.leaderLabel);
 
     // --- Feed panel ---
+    // On phones an always-on panel crowds the piece, so (like Galaxy of Nodes) the feed
+    // defaults HIDDEN on narrow screens and is opt-in via the "i" button; desktop / the
+    // gallery screen keeps it visible. Sized smaller on mobile when revealed.
+    const mobile = window.innerWidth <= 768;
     this.feedPanel = document.createElement('div');
     Object.assign(this.feedPanel.style, {
       position: 'absolute',
       // Vertically centered on the right edge — clears the top-right HUD (validators/TPS) the feed
       // used to crowd, and mirrors Galaxy of Nodes' placement. Reads integrated, not cornered.
       top: '50%',
-      right: '24px',
+      right: mobile ? '12px' : '24px',
       transform: 'translateY(-50%)',
-      width: '240px',
+      width: mobile ? 'min(62vw, 220px)' : '240px',
       background: PANEL_BG,
       backdropFilter: GLASS_BLUR,
       WebkitBackdropFilter: GLASS_BLUR,
@@ -142,6 +146,12 @@ export class InfoOverlay {
       pointerEvents: 'auto',
     });
     this.hud.appendChild(this.feedPanel);
+
+    // Mobile: start hidden — the "i" button reveals it on demand (clean default view).
+    if (mobile) {
+      this.visible = false;
+      this.feedPanel.style.display = 'none';
+    }
 
     // Feed header
     this.feedHeader = document.createElement('div');
