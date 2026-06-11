@@ -167,7 +167,7 @@ const INSTANCED_FRAGMENT_DECLS = /* glsl */ `
 // Stochastic dissolve into space at the far end of the record (opaque pass —
 // no blend-sorting woes; the film-grain pass and DoF absorb the dither).
 const FADE_DITHER = /* glsl */ `
-  float cluFade = 1.0 - smoothstep(uFadeS - 18.0, uFadeS, vCluS);
+  float cluFade = 1.0 - smoothstep(uFadeS - 12.0, uFadeS, vCluS);
   if (cluFade < 0.999 &&
       chash12(gl_FragCoord.xy + vec2(vCluSeed * 191.7, vCluSeed * 313.1)) > cluFade) discard;
 `;
@@ -509,7 +509,7 @@ export function applyStemPatches(shader: PatchedShader, uniforms: ClusterUniform
       '#include <common>\n' + STEM_FRAGMENT_DECLS + GLSL_HELPERS)
     .replace('#include <clipping_planes_fragment>',
       '#include <clipping_planes_fragment>\n' + /* glsl */ `
-      float cluFade = 1.0 - smoothstep(uFadeS - 18.0, uFadeS, vCluS);
+      float cluFade = 1.0 - smoothstep(uFadeS - 12.0, uFadeS, vCluS);
       if (cluFade < 0.999 && chash12(gl_FragCoord.xy + vec2(31.7, 11.3)) > cluFade) discard;
     `)
     .replace('#include <color_fragment>',
