@@ -101,7 +101,119 @@ export class CameraController {
     this.framingTarget.copy(p);
   }
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // SCRIPTED CAMERA — presentation mode (ADDITIVE). When engaged, the new branch
+  // at the top of update() takes precedence over the mouse / zoom / auto-orbit
+  // logic and the PresentationDirector commands the camera through flyTo() moves.
+  // None of this runs unless enterScriptedMode() has been called, so interactive
+  // behaviour is byte-for-byte unchanged when presentation mode is off.
+  // ───────────────────────────────────────────────────────────────────────────
+  private scripted = false;
+  private flying = false;
+  private flyElapsed = 0;
+  private flyDuration = 1;
+  private flyStartEye = new THREE.Vector3();
+  private flyEndEye = new THREE.Vector3();
+  private flyStartLook = new THREE.Vector3();
+  private flyEndLook = new THREE.Vector3();
+  // Live look-at the director feeds each frame; the held shot eases its look-at
+  // onto it so the slowly-swaying cluster stays centered (null = not tracking).
+  private scriptedLook: THREE.Vector3 | null = null;
+
+  /** True while the director is driving (mouse + auto-orbit suspended). */
+  get isScripted(): boolean {
+    return this.scripted;
+  }
+
+  /**
+   * Enter scripted (presentation) mode: suspend the OrbitControls, the idle
+   * auto-orbit and the click-zoom so the PresentationDirector has sole command of
+   * the camera. The held pose is seeded from wherever the camera currently is, so
+   * the first flyTo() eases out of the live position instead of snapping.
+   * Idempotent.
+   */
+  enterScriptedMode(): void {
+    this.scripted = true;
+    this.flying = false;
+    this.zooming = false;
+    this.autoOrbit = false;
+    this.controls.enabled = false;
+    if (this.inactivityTimer !== null) {
+      clearTimeout(this.inactivityTimer);
+      this.inactivityTimer = null;
+    }
+    this.flyStartEye.copy(this.camera.position);
+    this.flyEndEye.copy(this.camera.position);
+    this.flyStartLook.copy(this.controls.target);
+    this.flyEndLook.copy(this.controls.target);
+  }
+
+  /**
+   * Leave scripted mode and restore interactive control: re-enable the
+   * OrbitControls and hand back to the idle auto-orbit from the current pose.
+   */
+  exitScriptedMode(): void {
+    this.scripted = false;
+    this.flying = false;
+    this.zooming = false;
+    this.scriptedLook = null;
+    this.controls.enabled = true;
+    this.autoOrbit = true;
+    this.orbitAngle = Math.atan2(this.camera.position.z, this.camera.position.x);
+    this.resetInactivityTimer();
+  }
+
+  /**
+   * Begin a slow, eased move of the eye and look-at to a new composition. Eye and
+   * look-at are interpolated INDEPENDENTLY with a smootherstep ease (zero velocity
+   * at both ends — a patient settle, never a snap). Captures the current pose as
+   * the start, so chained shots flow into one another. Only has visible effect in
+   * scripted mode; the director always enters scripted mode first.
+   *
+   * @param eye       destination camera position (world space)
+   * @param lookAt    destination look-at point (world space)
+   * @param durationS move duration in seconds (clamped to > 0)
+   */
+  flyTo(eye: THREE.Vector3, lookAt: THREE.Vector3, durationS: number): void {
+    this.flyStartEye.copy(this.camera.position);
+    this.flyStartLook.copy(this.controls.target);
+    this.flyEndEye.copy(eye);
+    this.flyEndLook.copy(lookAt);
+    this.flyDuration = Math.max(durationS, 1e-3);
+    this.flyElapsed = 0;
+    this.flying = true;
+  }
+
+  /**
+   * Live look-at glue for the settle/hold AFTER a flyTo completes: the director
+   * feeds the continuously-recomputed anchor each frame and the look-at gently
+   * eases to follow the swaying cluster, so a held shot stays centered. Ignored
+   * while a flyTo is in flight (the move owns the look-at then).
+   */
+  trackLookAt(p: THREE.Vector3): void {
+    if (!this.scriptedLook) this.scriptedLook = new THREE.Vector3();
+    this.scriptedLook.copy(p);
+  }
+
   update(dt: number): void {
+    // Scripted (presentation) mode — ADDITIVE branch, takes precedence over all
+    // interactive logic below. Inert unless enterScriptedMode() has run.
+    if (this.scripted) {
+      if (this.flying) {
+        this.flyElapsed += dt;
+        const t = this.flyDuration > 0 ? Math.min(this.flyElapsed / this.flyDuration, 1) : 1;
+        const e = t * t * t * (t * (t * 6 - 15) + 10); // smootherstep — zero-velocity ends
+        this.camera.position.lerpVectors(this.flyStartEye, this.flyEndEye, e);
+        this.controls.target.lerpVectors(this.flyStartLook, this.flyEndLook, e);
+        if (t >= 1) this.flying = false;
+      } else if (this.scriptedLook) {
+        // Settle/hold: ease the look-at onto the live (swaying) anchor; eye holds.
+        this.controls.target.lerp(this.scriptedLook, Math.min(dt * 1.5, 1));
+      }
+      this.controls.update(); // re-applies lookAt(target); damping deltas are ~0
+      return;
+    }
+
     if (this.zooming) {
       this.zoomElapsed += dt;
       const t = Math.min(this.zoomElapsed / this.zoomDuration, 1.0);
