@@ -257,6 +257,12 @@ export class CrystalAxis {
       uCoreCol: { value: COLORS.CRYSTAL_CORE.clone() },
       uGemRough: { value: 0.07 },
       uMatrixRough: { value: 0.58 },
+      // Matrix-shell-only (stem): dark cool host-rock palette + reduced ember response.
+      // Kept separate from uMatrixCol (which the gems/druzy use for their deep-matrix
+      // color) so this pass cannot touch the jewels.
+      uStemCol: { value: COLORS.MATRIX_ROCK.clone() },
+      uStemLip: { value: COLORS.MATRIX_ROCK_LIP.clone() },
+      uStemEmber: { value: CONFIG.CLUSTER_MATRIX_EMBER },
       uGrabTex: { value: null },
       uGrabSize: { value: new THREE.Vector2(2, 2) },
       uCluIor: { value: CONFIG.CLUSTER_GEM_IOR },
@@ -299,9 +305,9 @@ export class CrystalAxis {
 
     this.stemMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
-      metalness: 0.05,
-      roughness: 0.7,
-      envMapIntensity: 0.4,
+      metalness: 0.0,        // pure dielectric — no metallic sheen on rough stone
+      roughness: 0.9,        // matte base (the shader refines roughness per-fragment)
+      envMapIntensity: 0.16, // the shared env is warm; let little of it wash the rock to tan
     });
     this.stemMat.onBeforeCompile = (shader) => applyStemPatches(shader, this.u);
     this.stemMat.customProgramCacheKey = () => 'cluster-stem-v1';
@@ -619,7 +625,7 @@ export class CrystalAxis {
    */
   private buildStemGeometry(seedNum: number): THREE.BufferGeometry {
     void seedNum;
-    const SEGS = 14;
+    const SEGS = 20; // rounder cross-section — fewer flat low-poly facets on the silhouette
     const s0 = 0.6;
     const s1 = CONFIG.CLUSTER_FADE_S + 6;
     const RINGS = 96;

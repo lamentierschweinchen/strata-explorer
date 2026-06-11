@@ -24,6 +24,12 @@ export const COLORS = {
   CRYSTAL_YOUNG: new THREE.Color(0.60, 0.40, 1.0),    // generic young-gem violet (coma/legend tint)
   CRYSTAL_SETTING: new THREE.Color(0.36, 0.20, 0.66), // deep violet (mid, crystallizing)
   CRYSTAL_OLD: new THREE.Color(0.072, 0.060, 0.118),  // dark indigo matrix (finalized, quiet)
+  // Matrix host-rock (the geode's exterior shell) — dark, desaturated graphite-indigo
+  // STONE that recedes behind the jewel cluster. Matrix-only: the gems' own deep-matrix
+  // color stays CRYSTAL_OLD above. The scene's ONLY lights are warm (tip + ember), so
+  // these are kept cool and dark to stop the rock washing to a cardboard tan.
+  MATRIX_ROCK: new THREE.Color(0.052, 0.054, 0.078),     // deep charcoal-indigo body
+  MATRIX_ROCK_LIP: new THREE.Color(0.120, 0.120, 0.165), // faint cool lift at the inner lip / growth front
   CRYSTAL_AMBER: new THREE.Color(1.0, 0.66, 0.28),    // the burning ember band / inner warmth
   // Leader thread — the luminous filament carrying each slot's light to the nucleus
   THREAD_GOLD: new THREE.Color(1.0, 0.80, 0.42),      // warm validator gold, softer than tracer amber

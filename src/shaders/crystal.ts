@@ -492,6 +492,9 @@ const STEM_FRAGMENT_DECLS = /* glsl */ `
   uniform vec3 uMatrixCol;
   uniform vec3 uEmberCol;
   uniform vec3 uCoreCol;
+  uniform vec3 uStemCol;
+  uniform vec3 uStemLip;
+  uniform float uStemEmber;
   varying vec3 vCluLocal;
   varying float vCluS;
   varying float vCluCrev;
@@ -514,48 +517,69 @@ export function applyStemPatches(shader: PatchedShader, uniforms: ClusterUniform
     `)
     .replace('#include <color_fragment>',
       '#include <color_fragment>\n' + /* glsl */ `
-      // Quiet rough shell: near the head it leans warm violet (alive), down the tail
-      // it settles to dark indigo. Crevices darken (baked occlusion).
-      float cluHead = 1.0 - smoothstep(2.0, 42.0, vCluS);
-      vec3 cluShell = mix(uMatrixCol, mix(uMatrixCol, uFamPurple, 0.32) * 2.4, cluHead);
-      cluShell *= 0.58 + 0.42 * (1.0 - vCluCrev);
-      cluShell *= 0.9 + 0.2 * cfbm3(vCluLocal * 0.8);
+      // Dark, desaturated host-rock that RECEDES — graphite-indigo stone, never a warm
+      // tan. Cool everywhere; the inner lip near the growth front lifts only a touch
+      // (still desaturated), never a saturated violet that would compete with the jewel.
+      float cluHead = 1.0 - smoothstep(2.0, 40.0, vCluS);
+      // Multi-octave mineral mottling so the body reads granular, not flat cardboard.
+      float cluMott = cfbm3(vCluLocal * 0.9) * 0.6 + cnoise3(vCluLocal * 3.7 + 11.0) * 0.4;
+      vec3 cluShell = mix(uStemCol, uStemLip, cluHead * (0.45 + 0.55 * cluMott));
+      // Crevices sink to deep stone shadow (baked occlusion in the botryoidal folds).
+      cluShell *= 0.42 + 0.58 * (1.0 - vCluCrev);
+      // Granular brightness grain (fine graphite fleck), subtle and cool.
+      cluShell *= 0.80 + 0.40 * cluMott;
       diffuseColor.rgb = cluShell;
     `)
     .replace('#include <roughnessmap_fragment>',
       '#include <roughnessmap_fragment>\n' + /* glsl */ `
-      roughnessFactor = 0.62 + 0.18 * cnoise3(vCluLocal * 2.2) + 0.12 * vCluCrev;
-      roughnessFactor = clamp(roughnessFactor, 0.3, 0.95);
+      // Matte stone: high floor, broad variation + a fine grain so speculars stay
+      // dull and scattered (no cardboard sheen). Crevices read roughest.
+      roughnessFactor = 0.74 + 0.14 * cnoise3(vCluLocal * 2.2) + 0.10 * vCluCrev
+        + 0.08 * cnoise3(vCluLocal * 11.0 + 3.3);
+      roughnessFactor = clamp(roughnessFactor, 0.55, 0.98);
     `)
     .replace('#include <normal_fragment_maps>',
       '#include <normal_fragment_maps>\n' + /* glsl */ `
       {
-        vec3 cluJ = vec3(
-          cnoise3(vCluLocal * 3.1),
-          cnoise3(vCluLocal * 3.1 + 7.7),
-          cnoise3(vCluLocal * 3.1 + 13.3)) - 0.5;
-        normal = normalize(normal + cluJ * 0.10);
+        // Multi-octave granular relief so the shell reads as real STONE, not folded
+        // low-poly facets: coarse undulation + medium grit + fine micro-pitting. Each
+        // is cheap value-noise; the summed offset magnitude is < 1, so the base unit
+        // normal can never be cancelled — normalize() stays finite (no bloom dark-disc).
+        vec3 nlp = vCluLocal;
+        vec3 g1 = vec3(cnoise3(nlp * 3.1),        cnoise3(nlp * 3.1 + 7.7),  cnoise3(nlp * 3.1 + 13.3)) - 0.5;
+        vec3 g2 = vec3(cnoise3(nlp * 9.3 + 2.0),  cnoise3(nlp * 9.3 + 5.0),  cnoise3(nlp * 9.3 + 8.0)) - 0.5;
+        vec3 g3 = vec3(cnoise3(nlp * 18.0 + 1.0), cnoise3(nlp * 18.0 + 4.0), cnoise3(nlp * 18.0 + 9.0)) - 0.5;
+        normal = normalize(normal + g1 * 0.17 + g2 * 0.12 + g3 * 0.07);
       }
     `)
     .replace('#include <emissivemap_fragment>',
       '#include <emissivemap_fragment>\n' + /* glsl */ `
       {
-        // The ember band: finality burning through the shell from inside (the backlit
-        // amber zone of reference 3). Textured by veins so it reads as material.
+        // Cool indigo floor: the scene's ONLY lights are warm (the tip + ember point
+        // lights either back-face the outer shell or wash it amber), so without a cool
+        // self-bias the rock tans. This dim charcoal-indigo lift keeps the body reading
+        // as cool stone; the warm lights then merely KISS its ridges. Far below the 0.72
+        // bloom threshold — it grounds the rock, never glows.
+        totalEmissiveRadiance += uStemCol * vec3(0.55, 0.65, 1.0) * 0.5;
+        // The ember band: finality glowing THROUGH the shell — now a faint crevice KISS,
+        // not a wash (uStemEmber far below the former 0.30). Strongest in the folds where the
+        // backlight would leak, veined so it reads as material.
         float cluEmber = exp(-pow(vCluS - uEmberS, 2.0) / max(uEmberW * uEmberW, 1.0));
-        float cluVein = 0.45 + 0.55 * cfbm3(vCluLocal * 0.55 + vec3(0.0, uTime * 0.015, 0.0));
-        totalEmissiveRadiance += uEmberCol * cluEmber * cluVein * (0.30 + 0.10 * uBreath);
+        float cluVein = 0.40 + 0.60 * cfbm3(vCluLocal * 0.55 + vec3(0.0, uTime * 0.015, 0.0));
+        totalEmissiveRadiance += uEmberCol * cluEmber * cluVein * (0.55 + 0.45 * vCluCrev)
+          * uStemEmber * (0.85 + 0.15 * uBreath);
         // Strike wave: a faint pulse of life racing down the shell.
         float cluWS = uStrikeT * uWaveSpeed;
         float cluWave = exp(-pow(vCluS - cluWS, 2.0) / 60.0) * exp(-uStrikeT * 2.1);
-        totalEmissiveRadiance += mix(uFamPurple, uCoreCol, 0.4) * cluWave * 0.10;
-        // Head zone: embedded druzy speckle — glitter as texture, pixel-scale points.
-        float cluHeadZ = 1.0 - smoothstep(2.0, 26.0, vCluS);
-        vec3 cluCell = floor(vCluLocal * 7.0);
-        float cluSel = step(0.86, chash13(cluCell + 5.0));
+        totalEmissiveRadiance += uFamPurple * cluWave * 0.07;
+        // Inner-lip druzy crust: fine, sparse micro-sparkle near the growth front (the
+        // reference geodes' glittering rim) — kept DARK and cool, a hint, not a field.
+        float cluHeadZ = 1.0 - smoothstep(2.0, 22.0, vCluS);
+        vec3 cluCell = floor(vCluLocal * 15.0);
+        float cluSel = step(0.90, chash13(cluCell + 5.0));
         float cluTw = 0.5 + 0.5 * sin(uTime * 1.3 + chash13(cluCell) * 31.4);
         totalEmissiveRadiance += mix(uFamPurple, uFamMagenta, chash13(cluCell + 9.0))
-          * cluSel * cluHeadZ * cluTw * 0.30;
+          * cluSel * cluHeadZ * cluTw * 0.11;
         totalEmissiveRadiance *= cluFade;
       }
     `);

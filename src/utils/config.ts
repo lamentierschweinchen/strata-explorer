@@ -29,6 +29,7 @@ export const CONFIG = {
   CLUSTER_LIGHT_INTENSITY: 95, // physical candela of the head PointLight (decay 2 — newborns sit 1-3u away; keep them out of ACES white)
   CLUSTER_EMBER_INTENSITY: 160, // candela of the amber finality-band light (sits INSIDE the shell — it backlights the matrix through its crevices)
   CLUSTER_EMBER_WIDTH: 5.0, // arc-length sigma of the ember band — a TIGHT girdle (re-fit to the short ~44u visible arc) so amber doesn't wash the whole body; jewel above it, dark matrix below
+  CLUSTER_MATRIX_EMBER: 0.14, // how strongly the ember band glows THROUGH the matrix shell as emissive (down from a former 0.30 — the host rock stays dark; the ember only kisses its crevices, never washes it tan)
 
   // Timing
   SLOT_INTERVAL: 400, // ms
