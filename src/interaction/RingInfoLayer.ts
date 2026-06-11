@@ -186,6 +186,7 @@ export class RingInfoLayer {
       letterSpacing: '0.4px',
       color: 'rgba(255,255,255,0.82)',
       textShadow: '0 2px 14px rgba(0,0,0,0.7)',
+      textWrap: 'balance', // balance lines so no lone orphan word drops to its own line
       opacity: '0',
       transition: 'opacity 0.4s ease',
       pointerEvents: 'none',

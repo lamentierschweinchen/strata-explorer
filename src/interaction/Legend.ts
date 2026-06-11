@@ -46,7 +46,7 @@ const ROWS: LegendRow[] = [
     symbol: CRYSTAL_GLYPH,
     label: 'The crystal',
     meaning:
-      "The column at the center is the network's timeline. It grows one layer every time Solana agrees on what just happened. It never branches, and it never rewrites itself.",
+      "The crystal at the center is the network's timeline. It grows a new layer every time Solana agrees on what just happened. It never branches, and it never rewrites itself.",
   },
   {
     symbol: LIGHTDARK_SWATCH,

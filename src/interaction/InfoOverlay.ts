@@ -47,8 +47,8 @@ const TX_TYPES = ['all', 'transfer', 'defi', 'nft', 'stake'] as const;
 export class InfoOverlay {
   private hud: HTMLElement;
 
-  // Toggle button
-  private toggleBtn: HTMLDivElement;
+  // Toggle button (mobile only — desktop keeps the feed always visible)
+  private toggleBtn: HTMLDivElement | null = null;
 
   // Leader label
   private leaderLabel: HTMLDivElement;
@@ -71,41 +71,51 @@ export class InfoOverlay {
   private visible = true;
 
   // Bound handlers for cleanup
-  private boundToggle: () => void;
+  private boundToggle: (() => void) | null = null;
 
   constructor() {
     this.hud = document.getElementById('hud')!;
 
-    // --- Toggle button ---
-    this.toggleBtn = document.createElement('div');
-    Object.assign(this.toggleBtn.style, {
-      position: 'absolute',
-      top: '12px',
-      left: '50%',
-      transform: 'translateX(-50%)',
-      width: '32px',
-      height: '32px',
-      borderRadius: '50%',
-      background: GLASS_BG,
-      backdropFilter: GLASS_BLUR,
-      WebkitBackdropFilter: GLASS_BLUR,
-      border: `1px solid ${GLASS_BORDER}`,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      cursor: 'pointer',
-      zIndex: '15',
-      fontFamily: 'serif',
-      fontStyle: 'italic',
-      fontSize: '16px',
-      color: 'rgba(255,255,255,0.7)',
-      userSelect: 'none',
-    });
-    this.toggleBtn.textContent = 'i';
-    this.hud.appendChild(this.toggleBtn);
+    // On phones the feed defaults hidden and the "i" button reveals it (Galaxy pattern). On
+    // desktop / the gallery screen the feed is always visible, so the toggle is superfluous —
+    // and a lone "i" at top-center controlling a panel on the far right edge just reads as a
+    // dead control. So the button exists on mobile only.
+    const mobile = window.innerWidth <= 768;
 
-    this.boundToggle = () => this.toggle();
-    this.toggleBtn.addEventListener('click', this.boundToggle);
+    // --- Toggle button (mobile only) ---
+    if (mobile) {
+      this.toggleBtn = document.createElement('div');
+      Object.assign(this.toggleBtn.style, {
+        position: 'absolute',
+        top: '12px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        width: '32px',
+        height: '32px',
+        borderRadius: '50%',
+        background: GLASS_BG,
+        backdropFilter: GLASS_BLUR,
+        WebkitBackdropFilter: GLASS_BLUR,
+        border: `1px solid ${GLASS_BORDER}`,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        zIndex: '15',
+        fontFamily: 'serif',
+        fontStyle: 'italic',
+        fontSize: '16px',
+        color: 'rgba(255,255,255,0.7)',
+        userSelect: 'none',
+      });
+      this.toggleBtn.textContent = 'i';
+      this.toggleBtn.title = 'Show live transactions';
+      this.hud.appendChild(this.toggleBtn);
+
+      const bound = () => this.toggle();
+      this.boundToggle = bound;
+      this.toggleBtn.addEventListener('click', bound);
+    }
 
     // --- Leader label ---
     this.leaderLabel = document.createElement('div');
@@ -125,9 +135,8 @@ export class InfoOverlay {
 
     // --- Feed panel ---
     // On phones an always-on panel crowds the piece, so (like Galaxy of Nodes) the feed
-    // defaults HIDDEN on narrow screens and is opt-in via the "i" button; desktop / the
-    // gallery screen keeps it visible. Sized smaller on mobile when revealed.
-    const mobile = window.innerWidth <= 768;
+    // defaults HIDDEN on narrow screens (revealed by the "i" button); desktop / the gallery
+    // screen keeps it visible. Sized smaller on mobile when revealed.
     this.feedPanel = document.createElement('div');
     Object.assign(this.feedPanel.style, {
       position: 'absolute',
@@ -390,13 +399,15 @@ export class InfoOverlay {
   }
 
   dispose(): void {
-    this.toggleBtn.removeEventListener('click', this.boundToggle);
+    if (this.toggleBtn && this.boundToggle) {
+      this.toggleBtn.removeEventListener('click', this.boundToggle);
+    }
 
     for (const [, pill] of this.filterPills) {
       pill.replaceWith(pill.cloneNode(true));
     }
 
-    if (this.toggleBtn.parentNode) this.toggleBtn.parentNode.removeChild(this.toggleBtn);
+    if (this.toggleBtn?.parentNode) this.toggleBtn.parentNode.removeChild(this.toggleBtn);
     if (this.leaderLabel.parentNode) this.leaderLabel.parentNode.removeChild(this.leaderLabel);
     if (this.feedPanel.parentNode) this.feedPanel.parentNode.removeChild(this.feedPanel);
 

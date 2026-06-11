@@ -14,7 +14,7 @@ Consumed by: **Design** lane (`Legend.ts`), **Wiring** lane (`main.ts` loading c
 > Watch the network grow in real time.
 
 ## Legend — "What You're Looking At"
-- **The crystal.** The column at the center is the network's timeline. It grows one layer every time Solana agrees on what just happened. It never branches, and it never rewrites itself.
+- **The crystal.** The crystal at the center is the network's timeline. It grows a new layer every time Solana agrees on what just happened. It never branches, and it never rewrites itself.
 - **Light and dark.** The newest layers glow. The oldest harden into dark rock. Once a layer settles it can never change again. It becomes part of the record, forever.
 - **The points of light.** Each one is a real validator, a computer somewhere in the world helping keep the network honest. The more it has staked, the larger it burns.
 - **The flare.** Every fraction of a second, one validator is chosen to lay the next layer. It flares, and light reaches in toward the crystal. *(Design: richer flare visualization pending.)*

@@ -86,7 +86,7 @@ const SHOTS: readonly Shot[] = [
     moveBars: 3, holdBars: 2,
     captions: [
       'The newest layers glow.',
-      'This is the growth front — the very newest block.',
+      'The growth front: the newest block.',
     ],
     showRecentRing: true,
   },
@@ -96,14 +96,14 @@ const SHOTS: readonly Shot[] = [
     moveBars: 4, holdBars: 2,
     captions: [
       'At the burning band, each layer becomes final.',
-      'Around twelve seconds in, the network locks the past in place.',
+      'Twelve seconds in, the past is locked in place.',
     ],
   },
   {
     name: 'settle-tail', look: 'tailFade',
     radius: 124, height: -16, azOffset: 0.10, azAdvance: 0.16,
     moveBars: 4, holdBars: 2,
-    captions: ['The oldest harden into rock, and can never change again.'],
+    captions: ['The oldest harden into rock. They can never change again.'],
   },
   {
     name: 'pull-wide', look: 'brightCentroid',
