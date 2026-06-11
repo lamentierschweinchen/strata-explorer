@@ -60,16 +60,27 @@ export class AudioController {
     }
 
     // First enable: the click is the gesture — load + start the engine inside it.
+    // A machine with a broken/absent audio device can leave AudioContext.resume()
+    // pending FOREVER (no rejection) — race a timeout so the button recovers
+    // instead of spinning all day on a gallery kiosk.
     if (!this.onFirstEnable) return; // not wired (shouldn't happen)
     this.state = 'loading';
     this.updateIcon();
     try {
-      await this.onFirstEnable();
+      await Promise.race([
+        this.onFirstEnable(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('audio start timed out (10s) — no audio device?')), 10_000),
+        ),
+      ]);
       this.enabled = true;
       this.state = 'on';
     } catch (e) {
-      console.error('[audio] enable failed', e);
+      console.warn('[audio] enable failed', e);
       this.state = 'muted';
+      // If a slow start eventually resolves after the timeout, force it muted so
+      // sound never appears while the button shows the muted state.
+      this.onMuteToggle?.(true);
     }
     this.updateIcon();
   }

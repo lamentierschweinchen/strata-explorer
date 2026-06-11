@@ -313,13 +313,27 @@ export class Strata {
     }));
   }
 
-  /** Keep the label layer's input mode in step with the director (hover off while presenting). */
+  // ?chrome keeps the full interactive chrome visible during presentation (A/B hook).
+  private readonly keepChrome =
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('chrome');
+
+  /**
+   * Keep the UI in step with the director: hover off while presenting, and the
+   * interactive chrome (feed / legend / leader label — the mouse-shaped pieces) fades
+   * out so the cinema is crystal + captions + the HUD corners the plaque points at.
+   * The cursor hides too (kiosk). `?chrome` keeps everything for comparison.
+   */
   private syncPresentationMode(): void {
     const presenting = this.presentationDirector.active;
     if (presenting === this.presenting) return;
     this.presenting = presenting;
     this.ringInfoLayer.setMode(presenting ? 'presentation' : 'interactive');
     if (presenting) this.tooltip.hide();
+    if (!this.keepChrome) {
+      this.infoOverlay.setPresentation(presenting);
+      this.legend.setPresentation(presenting);
+    }
+    this.container.style.cursor = presenting ? 'none' : '';
   }
 
   /**

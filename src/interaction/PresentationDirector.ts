@@ -78,7 +78,12 @@ const SHOTS: readonly Shot[] = [
     name: 'push-core', look: 'brightCentroid',
     radius: 96, height: 16, azOffset: 0.0, azAdvance: 0.0,
     moveBars: 5, holdBars: 2,
-    captions: ['Every fraction of a second, the network agrees, and the crystal grows.'],
+    // The piece names itself on the gallery screen: the title card opens the first
+    // cycle, then alternates with the heartbeat line (captions rotate per cycle).
+    captions: [
+      'THE STRATA · the Solana blockchain, alive',
+      'Every fraction of a second, the network agrees, and the crystal grows.',
+    ],
   },
   {
     name: 'rise-head', look: 'head',

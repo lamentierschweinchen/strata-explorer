@@ -281,6 +281,17 @@ export class Legend {
       ${rows}`;
   }
 
+  /** Presentation (gallery cinema) fade: the peek button implies a mouse — it bows out. */
+  setPresentation(presenting: boolean): void {
+    this.wrapper.style.transition = 'opacity 1.2s ease';
+    this.wrapper.style.opacity = presenting ? '0' : '';
+    this.wrapper.style.pointerEvents = presenting ? 'none' : 'auto';
+    if (presenting && (this.open || this.pinned)) {
+      this.pinned = false;
+      this.hide();
+    }
+  }
+
   private show(): void {
     this.open = true;
     this.panel.style.opacity = '1';

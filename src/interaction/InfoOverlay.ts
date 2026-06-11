@@ -69,6 +69,9 @@ export class InfoOverlay {
 
   // Visibility
   private visible = true;
+  // Presentation fade active — blocks the per-frame leader-label opacity writes
+  // in update()/setLeader() from overriding the faded state.
+  private presenting = false;
 
   // Bound handlers for cleanup
   private boundToggle: (() => void) | null = null;
@@ -349,7 +352,9 @@ export class InfoOverlay {
     this.leaderName = name;
     this.leaderWorldPos.copy(worldPos);
     this.leaderLabel.textContent = name ? `Leader: ${name}` : '';
-    this.leaderLabel.style.opacity = this.visible && name ? '1' : '0';
+    if (!this.presenting) {
+      this.leaderLabel.style.opacity = this.visible && name ? '1' : '0';
+    }
   }
 
   pushTransactions(txs: TransactionInfo[]): void {
@@ -370,6 +375,26 @@ export class InfoOverlay {
     return this.activeFilter;
   }
 
+  /**
+   * Presentation (gallery cinema) fade: the feed panel + leader label imply a mouse, so
+   * they bow out while the director runs; the captions carry the narration instead. The
+   * HUD corners (slot/validators/TPS) are NOT ours and stay — the plaque points at them.
+   */
+  setPresentation(presenting: boolean): void {
+    this.presenting = presenting;
+    const els: (HTMLElement | null)[] = [this.feedPanel, this.leaderLabel, this.toggleBtn];
+    for (const el of els) {
+      if (!el) continue;
+      el.style.transition = 'opacity 1.2s ease';
+      el.style.opacity = presenting ? '0' : '';
+      el.style.pointerEvents = presenting ? 'none' : '';
+    }
+    if (!presenting && this.leaderLabel) {
+      // restore the label's own visibility logic (it manages opacity per-frame)
+      this.leaderLabel.style.opacity = this.visible && this.leaderName ? '1' : '0';
+    }
+  }
+
   update(dt: number, camera: THREE.PerspectiveCamera, rendererDom: HTMLElement): void {
     // Batch refresh cycle (skipped while the overlay is hidden — no offscreen DOM churn)
     this.refreshTimer += dt * 1000;
@@ -378,8 +403,8 @@ export class InfoOverlay {
       if (this.visible) this.refresh();
     }
 
-    // Project leader label to 2D
-    if (this.leaderName && this.visible) {
+    // Project leader label to 2D (skipped while presenting — the label is faded out)
+    if (this.leaderName && this.visible && !this.presenting) {
       const pos = this.leaderWorldPos.clone();
       pos.project(camera);
 
