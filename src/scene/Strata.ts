@@ -4,6 +4,7 @@ import { CONFIG } from '../utils/config';
 import { COLORS } from '../utils/colors';
 import { ValidatorCloud } from './ValidatorCloud';
 import { CrystalAxis } from './CrystalAxis';
+import { EpochArc } from './EpochArc';
 import { SeismicWave } from './SeismicWave';
 import { LeaderBeam } from './LeaderBeam';
 import { Background } from './Background';
@@ -31,6 +32,7 @@ export class Strata {
   // Visual subsystems
   private validatorCloud: ValidatorCloud;
   private crystalAxis: CrystalAxis;
+  private epochArc: EpochArc;
   private seismicWave: SeismicWave;
   private leaderBeam: LeaderBeam;
   private transactionPool: TransactionPool;
@@ -132,6 +134,11 @@ export class Strata {
     // Crystal Axis
     this.crystalAxis = new CrystalAxis();
     this.scene.add(this.crystalAxis.mesh);
+
+    // Epoch arc — the piece's second, slow clock: a luminous ring at the geode's base
+    // that fills across the ~2-day epoch (fades in on the first real epoch sample).
+    this.epochArc = new EpochArc();
+    this.scene.add(this.epochArc.mesh);
 
     // Validator Cloud
     const validators = dataSource.getValidators();
@@ -261,6 +268,10 @@ export class Strata {
         if (this.lastEpoch >= 0 && epochInfo.epoch > this.lastEpoch) this.epochCeremony();
         this.lastEpoch = epochInfo.epoch;
 
+        // Epoch arc: the slow clock creeps with the real epoch position (snaps on rollover).
+        this.epochArc.setProgress(epochInfo.slotIndex / Math.max(1, epochInfo.slotsInEpoch));
+        this.epochArc.setEpoch(epochInfo.epoch);
+
         // External tap (the ?dj audio overlay hears the same heartbeat the crystal grows by).
         this.eventTap?.onSlot?.(slot, missed);
         this.eventTap?.onLeaderIndex?.(leaderIdx);
@@ -344,6 +355,7 @@ export class Strata {
     this.cameraController.update(dt);
     this.raycaster.update(this.camera);
     this.crystalAxis.update(dt);
+    this.epochArc.update(dt);
     // DESIGN LANE: feed the growth-tip light into the validator cloud so the tip's pulse
     // visibly illuminates nearby validators (custom additive shader → driven by uniform).
     // Must run after crystalAxis.update() has refreshed the tip glow this frame.
@@ -395,6 +407,7 @@ export class Strata {
     this.dataSource.stop();
     this.validatorCloud.dispose();
     this.crystalAxis.dispose();
+    this.epochArc.dispose();
     this.seismicWave.dispose();
     this.leaderBeam.dispose();
     this.transactionPool.dispose();
