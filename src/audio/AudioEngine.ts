@@ -77,12 +77,25 @@ export const AUDIO_CONFIG = {
    *  room. depth 0 = off, ~0.3 = gentle, 0.6+ = heavy. */
   pump: { depth: 0.32, attackSec: 0.02, releaseSec: 0.28 },
 
-  /** The key. Everything maps into this scale — never raw chromatic. */
+  /** The key. Everything maps into this scale — never raw chromatic.
+   *
+   *  WHY E: the chain's heartbeat IS a pitch. One slot = 396ms = 2.525 Hz; five octaves up that is
+   *  80.8 Hz ≈ E2 (−34 cents). At spec (400ms) Solana would sit in the crack between D# and E —
+   *  the real network runs slightly hot, and that overdelivery commits it to E. Voiced DORIAN (the
+   *  dub mode: minor with a lit 6th), with the kick on E1 = 41.2 Hz — the canonical club sub. */
   key: {
-    root: 'A',
+    root: 'E',
     baseOctave: 2,
-    scale: [0, 2, 3, 5, 7, 8, 10], // A natural minor (Aeolian): A B C D E F G
-    scaleName: 'A natural minor',
+    scale: [0, 2, 3, 5, 7, 9, 10], // E Dorian: E F# G A B C# D
+    scaleName: 'E Dorian',
+    /** Global tuning offset. 0 = concert pitch (stay in tune with the bed / the world).
+     *  −34 = the chain's TRUE pitch (the measured 396ms slot, octave-shifted, exactly). */
+    tuningOffsetCents: 0,
+    /** THE EPOCH ACT — the 2-day key gets an inner arc: the progression's center of gravity
+     *  migrates with epoch progress — tonic (dawn third) → subdominant (midday) → dominant (dusk),
+     *  so the whole epoch is one giant cadence and the rollover Sunrise RESOLVES it into the next
+     *  key. Functional harmony at the network's calendar scale. */
+    actBias: true,
     /** Diatonic 7th chords as scale-degree stacks of thirds (root in the bass). The Director walks
      *  these for the harmonic arc; in 'leader' mode each leaderIndex picks one. */
     progression: [
@@ -114,11 +127,79 @@ export const AUDIO_CONFIG = {
     /** Autonomous DJ cycle: trigger a Sunrise every N minutes for the dancefloor. 0 = off (only the
      *  real epoch rollover + the manual button trigger it — the honest default). */
     autoCycleMin: 0,
+    /** EPOCH MODULATION — each Solana epoch (~2 days) is its own key, stepping a perfect fifth
+     *  from home per epoch (the circle of fifths: 12 epochs ≈ 24 days tours all 12 keys and comes
+     *  home). The rollover Sunrise lands IN the new key — each network day in a new light. */
+    epochModulation: { enabled: true, stepSemis: 7 },
   },
 
-  /** THE HEARTBEAT — a soft sub kick on each produced slot. */
+  /** MOMENTS — rare, honest gestures fired by detectors on real network behavior. Each also has
+   *  a manual trigger (the studio's MOMENTS buttons) for tuning by ear. Cooldowns keep the gallery
+   *  calm; every gesture maps to one real cause. */
+  moments: {
+    /** ⚡ SURGE — activity spike: TPS crosses `ratio` × its trailing average (EMA, `emaTauSec`)
+     *  above an absolute floor → a mini-build (the Sunrise's little cousin): energy climbs, the
+     *  riser sweeps, the dub delay storms, then it exhales. No key change, kick keeps driving. */
+    surge: {
+      enabled: true,
+      ratio: 1.6,
+      floorTps: 1200,
+      emaTauSec: 240,
+      cooldownSec: 240,
+      buildBars: 6,
+      holdBars: 2,
+      releaseBars: 8,
+      delayThrow: 0.78, // feedback pushed here at the peak, easing back over the release
+      settleIntensity: 0.55,
+    },
+    /** 🐋 DEEP — a whale: a single tx with magnitude ≥ threshold → one deep gong on the key root,
+     *  long tail, the room ringing around it. Rare by construction. */
+    deep: {
+      enabled: true,
+      threshold: 0.95,
+      cooldownSec: 30,
+      octave: 0, // root at baseOctave (E2) — felt more than heard
+      subOctaveDown: true, // double an octave below (E1) for the chest
+      dur: 2.5,
+      velocity: 0.65,
+    },
+    /** 𝄽 STUMBLE — the network trips: ≥ `misses` missed slots within the last `windowSlots` →
+     *  the kick drops out for `dropBars` and the room holds its breath, then the floor returns. */
+    stumble: {
+      enabled: true,
+      misses: 3,
+      windowSlots: 8,
+      dropBars: 1,
+      cooldownSec: 90,
+    },
+  },
+
+  /** THE ARRANGER — phrase-level musical storytelling. The CLOCK is musical convention (8-bar
+   *  phrases, 32-bar sections ≈ 51s — club pacing); the DECISIONS are the chain's: at every
+   *  section boundary the arranger reads what the network actually did during the last section
+   *  (average TPS vs its trailing baseline, miss rate) and chooses the next block:
+   *    GROOVE — the driving default;
+   *    DUB    — the network cooled / stumbled: strip back, slower harmony, deeper echoes;
+   *    LIFT   — the network is heating: faster harmonic rhythm, busier melody, a riser into the turn;
+   *    BREAK  — energy is high and it's been a while: the kick VANISHES for `breakKickOutBars`,
+   *             the pad blooms, a riser climbs — then the DROP: floor back, delay throw, deep hit.
+   *  Every 8th bar the hats breathe (the phrase made audible). The chain DJs the room. */
+  arranger: {
+    enabled: true,
+    sectionBars: 32,
+    phraseBars: 8,
+    breakKickOutBars: 8,
+    liftTpsRatio: 1.15, // section avg TPS ≥ this × baseline → LIFT
+    dubTpsRatio: 0.85, // ≤ this × baseline (or missy) → DUB
+    dubMissRate: 0.06,
+    breakMinIntensity: 0.55, // BREAK only when the room has energy to spend
+    minSectionsBetweenBreaks: 3,
+  },
+
+  /** THE HEARTBEAT — a soft sub kick on each produced slot. The note tracks the key root
+   *  (setKey retunes it): home = E1 ≈ 41.2 Hz, the canonical club sub. */
   slot: {
-    note: 'A1',
+    note: 'E1',
     dur: 0.28,
     velocity: 0.8,
     gain: 0.9,
@@ -128,6 +209,21 @@ export const AUDIO_CONFIG = {
     quantize: '16n',
     sendReverb: 0.08,
     sendDelay: 0.0,
+  },
+
+  /** THE EXHALE — an off-beat hat fired by the SAME slot event as the kick (one real event, two
+   *  voices in a fixed musical relationship: kick on the beat, hat half a beat later — the slot's
+   *  inhale/exhale). A missed slot produces NEITHER (audible honesty). Velocity rides intensity:
+   *  on a calm network the hats vanish entirely (pure dub); on a busy one the floor shakes. */
+  hat: {
+    gain: 0.16,
+    velocity: 0.55,
+    dur: 0.045,
+    highpassHz: 7500,
+    minIntensity: 0.12, // below this energy the hats stay out
+    minGapSec: 0.05,
+    sendReverb: 0.1,
+    sendDelay: 0.18,
   },
 
   /** A MISSED slot — no kick; a short filtered-noise "ghost" with a downward sweep. */
@@ -299,6 +395,15 @@ function diffDeep(obj: Record<string, any>, base: Record<string, any>): Record<s
   return out;
 }
 
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+
+/** Transpose a root note name by semitones (octave-agnostic). */
+function transposeRoot(root: string, semis: number): string {
+  const i = NOTE_NAMES.indexOf(root);
+  if (i < 0) return root;
+  return NOTE_NAMES[(((i + semis) % 12) + 12) % 12];
+}
+
 /** Deep-assign `src` into `dst` (arrays replaced wholesale). */
 function assignDeep(dst: Record<string, any>, src: Record<string, any>): void {
   for (const k of Object.keys(src)) {
@@ -340,6 +445,8 @@ interface Graph {
   reverbReady: Promise<void>;
 
   kick: Tone.MembraneSynth;
+  hat: Tone.NoiseSynth;
+  hatFilter: Tone.Filter;
   ghost: Tone.NoiseSynth;
   ghostFilter: Tone.Filter;
   pad: Tone.PolySynth<Tone.Synth>;
@@ -348,6 +455,7 @@ interface Graph {
   tx: Record<TxType, Tone.PolySynth<any>>;
   lead: Tone.PolySynth<any>;
   leadIntensityGain: Tone.Gain;
+  deep: Tone.PolySynth<any>;
 
   droneA: Tone.Oscillator;
   droneB: Tone.Oscillator;
@@ -396,6 +504,7 @@ export class AudioEngine {
 
   // Lead sequencer.
   private slotCount = 0;
+  private allSlotCount = 0; // includes missed slots (the stumble detector's clock)
   private leadStep = 0;
   private useBrightMotif = false;
 
@@ -405,8 +514,24 @@ export class AudioEngine {
   private melodyLastBar = -1;
 
   // Key state: the current mode key (into KEY_MODES) and the Sunrise's temporary semitone lift.
-  private modeKey = 'minor';
+  private modeKey = 'dorian';
   private liftSemis = 0;
+
+  // Epoch→key modulation: the first epoch seen anchors "home"; later epochs step fifths from it.
+  private homeRoot: string = AUDIO_CONFIG.key.root;
+  private baseEpoch: number | null = null;
+  private lastEpochNumber: number | null = null;
+
+  // Moment detectors: trailing-average TPS (surge), cooldown stamps, missed-slot ring (stumble).
+  private tpsEma: number | null = null;
+  private lastTpsAt = 0;
+  private _surgeActive = false;
+  private surgeTimers: number[] = [];
+  private lastSurgeAt = -Infinity;
+  private lastDeepAt = -Infinity;
+  private missedSlotMarks: number[] = []; // slotCount indices of recent misses
+  private lastStumbleAt = -Infinity;
+  private stumbleTimer: number | null = null;
 
   // Recording (a tap on the master limiter).
   private recDest: MediaStreamAudioDestinationNode | null = null;
@@ -424,7 +549,25 @@ export class AudioEngine {
 
   // Mono / throttle guards.
   private lastKickTime = 0;
+  private lastHatTime = 0;
+  private lastGhostTime = 0;
   private lastTxTime = 0;
+
+  // ── The Arranger: phrase/section state on the leader-bar clock. The clock is musical
+  // convention; the section CHOICE is the chain's (stats gathered per section, read at the turn).
+  private arrSection: 'GROOVE' | 'DUB' | 'LIFT' | 'BREAK' = 'GROOVE';
+  private arrReason = 'opening';
+  private arrBarInSection = 0;
+  private arrSectionsSinceBreak = 99;
+  private arrStats = { slots: 0, miss: 0, tpsSum: 0, tpsN: 0, whales: 0 };
+  private arrEmaAtStart: number | null = null;
+  private arrTimers: number[] = [];
+  // live per-section performance overrides (consulted at trigger time; never mutate user config)
+  private arrHatMult = 1;
+  private arrLeadEvery: number | null = null;
+  private arrChordBars: number | null = null;
+  private arrDelayBias = 0;
+  private arrKickHeld = false;
   private txRot: Record<TxType, number> = { transfer: 0, defi: 0, nft: 0, stake: 0 };
 
   private cachedRootMidi: number | null = null;
@@ -478,6 +621,8 @@ export class AudioEngine {
     const t = Tone.now();
 
     this.cancelSunrise();
+    this.cancelMoments();
+    this.cancelArranger();
     this.disarmAutoCycle();
 
     if (this.heldPad) {
@@ -517,6 +662,8 @@ export class AudioEngine {
     if (this._disposed) return;
     this._disposed = true;
     this.cancelSunrise();
+    this.cancelMoments();
+    this.cancelArranger();
     this.disarmAutoCycle();
     try {
       this.stop();
@@ -542,8 +689,14 @@ export class AudioEngine {
     const g = this.guard();
     if (!g) return;
 
+    this.allSlotCount += 1;
+
     if (missed) {
-      const time = this.quantize(AUDIO_CONFIG.missed.quantize);
+      // Mono guard: a burst of misses in one tick (e.g. a WS catch-up) must not retrigger the
+      // mono noise source at the same instant — nudge each ghost forward like the kick.
+      let time = this.quantize(AUDIO_CONFIG.missed.quantize);
+      time = Math.max(time, this.lastGhostTime + 0.03);
+      this.lastGhostTime = time;
       const f = g.ghostFilter.frequency;
       try {
         f.cancelScheduledValues(time);
@@ -552,24 +705,65 @@ export class AudioEngine {
       } catch {
         /* overlapping ghosts can collide on the shared filter param — harmless */
       }
-      g.ghost.triggerAttackRelease(AUDIO_CONFIG.missed.dur, time, AUDIO_CONFIG.missed.velocity);
+      try {
+        g.ghost.triggerAttackRelease(AUDIO_CONFIG.missed.dur, time, AUDIO_CONFIG.missed.velocity);
+      } catch {
+        /* a same-instant retrigger race — drop this ghost rather than throw */
+      }
+
+      this.arrStats.miss += 1;
+
+      // 𝄽 STUMBLE detector: a cluster of misses = the network tripping → the floor drops out.
+      const st = AUDIO_CONFIG.moments.stumble;
+      this.missedSlotMarks.push(this.allSlotCount);
+      this.missedSlotMarks = this.missedSlotMarks.filter((m) => this.allSlotCount - m < st.windowSlots);
+      if (
+        st.enabled &&
+        this.missedSlotMarks.length >= st.misses &&
+        Tone.now() - this.lastStumbleAt > st.cooldownSec
+      ) {
+        this.missedSlotMarks = [];
+        this.triggerStumble();
+      }
       return;
     }
 
     let time = this.quantize(AUDIO_CONFIG.slot.quantize);
     time = Math.max(time, this.lastKickTime + AUDIO_CONFIG.slot.minGapSec);
     this.lastKickTime = time;
+    // Frequency (not note-name) so the global tuning offset applies to the heartbeat too.
     g.kick.triggerAttackRelease(
-      AUDIO_CONFIG.slot.note,
+      this.tuned(Tone.Frequency(AUDIO_CONFIG.slot.note).toFrequency()),
       AUDIO_CONFIG.slot.dur,
       time,
       AUDIO_CONFIG.slot.velocity,
     );
     this.schedulePump(time); // the sustained layers duck with the kick and swell back — the pump
+    this.arrStats.slots += 1;
 
-    // The chain advances the melody — one step every `everySlots` produced blocks.
+    // THE EXHALE — the same slot fires an off-beat hat half a beat after its kick. Intensity
+    // gates it (calm network = no hats, pure dub) and the phrase's final bar breathes (hats rest).
+    const hcfg = AUDIO_CONFIG.hat;
+    const phraseBreath =
+      AUDIO_CONFIG.arranger.enabled &&
+      this.arrBarInSection % AUDIO_CONFIG.arranger.phraseBars === AUDIO_CONFIG.arranger.phraseBars - 1;
+    const hatLevel = this.intensityTarget * this.arrHatMult;
+    if (hatLevel >= hcfg.minIntensity && !phraseBreath) {
+      let hatTime = time + (60 / AUDIO_CONFIG.tempoBpm) / 2;
+      hatTime = Math.max(hatTime, this.lastHatTime + hcfg.minGapSec);
+      this.lastHatTime = hatTime;
+      try {
+        g.hat.triggerAttackRelease(hcfg.dur, hatTime, hcfg.velocity * (0.25 + 0.75 * hatLevel));
+      } catch {
+        /* same-instant retrigger race — drop this hat rather than throw */
+      }
+    }
+
+    // The chain advances the melody — one step every `everySlots` produced blocks (the arranger
+    // may densify or sparsen the rate per section).
     this.slotCount += 1;
-    if (AUDIO_CONFIG.lead.enabled && this.slotCount % AUDIO_CONFIG.lead.everySlots === 0) {
+    const leadEvery = Math.max(1, this.arrLeadEvery ?? AUDIO_CONFIG.lead.everySlots);
+    if (AUDIO_CONFIG.lead.enabled && this.slotCount % leadEvery === 0) {
       this.stepLead();
     }
   }
@@ -580,15 +774,19 @@ export class AudioEngine {
     if (leaderIndex === this.lastLeaderIndex) return;
     this.lastLeaderIndex = leaderIndex;
     this.leaderChangeCount += 1;
+    this.arrangerBarTick(); // one leader = one bar = the arranger's clock
 
     // Advance the harmony. Sequential = walk the progression on a slower harmonic rhythm (longer
-    // arcs); leader = each validator's signature chord.
+    // arcs); leader = each validator's signature chord. The arranger may override the cadence
+    // (BREAK holds, LIFT accelerates), and the EPOCH ACT rotates the walk's starting chord so the
+    // progression's center migrates i → iv → v across the network's 2-day "day".
     const prog = AUDIO_CONFIG.key.progression;
     let chord: number[];
     if (AUDIO_CONFIG.director.progressionMode === 'sequential') {
-      const every = Math.max(1, AUDIO_CONFIG.director.chordChangeEveryBars);
+      const every = Math.max(1, this.arrChordBars ?? AUDIO_CONFIG.director.chordChangeEveryBars);
       if (this.leaderChangeCount % every !== 0 && this.heldPad) return; // hold the chord
-      chord = prog[this.progStep % prog.length];
+      const actOffset = AUDIO_CONFIG.key.actBias ? (this.lastEpochP < 1 / 3 ? 0 : this.lastEpochP < 2 / 3 ? 2 : 3) : 0;
+      chord = prog[(this.progStep + actOffset) % prog.length];
       this.progStep += 1;
     } else {
       const idx = ((leaderIndex % prog.length) + prog.length) % prog.length;
@@ -658,12 +856,49 @@ export class AudioEngine {
     const dur = voiceCfg.dur * (1 + AUDIO_CONFIG.tx.accentDuration * (v - 0.5));
 
     g.tx[type].triggerAttackRelease(freq, dur, time, vel);
+
+    // 🐋 DEEP detector: a whale-magnitude tx → one deep gong on the root (cooldown-guarded).
+    const dp = AUDIO_CONFIG.moments.deep;
+    if (dp.enabled && v >= dp.threshold) {
+      this.arrStats.whales += 1;
+      if (Tone.now() - this.lastDeepAt > dp.cooldownSec) this.triggerDeep(v);
+    }
   }
 
   /** CONTINUOUS density → ENERGY (texture/brightness/lead level/feedback). Never a note. */
   setActivity(tps: number): void {
     this.lastTps = tps;
-    if (!this.graph || this.intensityManual || this._sunriseActive) return;
+    if (!this.graph) return;
+
+    // Trailing average (EMA, dt-aware) — the surge detector's sense of "normal".
+    const nowS = Tone.now();
+    const sg = AUDIO_CONFIG.moments.surge;
+    if (this.tpsEma === null) {
+      this.tpsEma = tps;
+    } else {
+      const dt = Math.max(0.05, Math.min(10, nowS - this.lastTpsAt));
+      const alpha = 1 - Math.exp(-dt / Math.max(1, sg.emaTauSec));
+      this.tpsEma += (tps - this.tpsEma) * alpha;
+    }
+    this.lastTpsAt = nowS;
+    this.arrStats.tpsSum += tps;
+    this.arrStats.tpsN += 1;
+
+    // ⚡ SURGE detector: a genuine spike — well above the trailing average AND an absolute floor.
+    if (
+      sg.enabled &&
+      !this._surgeActive &&
+      !this._sunriseActive &&
+      !this.intensityManual &&
+      tps >= sg.floorTps &&
+      this.tpsEma > 0 &&
+      tps / this.tpsEma >= sg.ratio &&
+      nowS - this.lastSurgeAt > sg.cooldownSec
+    ) {
+      this.triggerSurge();
+    }
+
+    if (this.intensityManual || this._sunriseActive || this._surgeActive) return;
     if (!AUDIO_CONFIG.director.intensityFromTps) return;
     const target = clamp(tps / AUDIO_CONFIG.activity.maxTps, 0, 1);
     const rising = target > this.intensityTarget;
@@ -673,10 +908,28 @@ export class AudioEngine {
     this.rampIntensityTo(target, sec);
   }
 
-  onEpochProgress(p01: number): void {
+  /** Epoch position (and, when known, the epoch NUMBER — enables the key calendar). */
+  onEpochProgress(p01: number, epoch?: number): void {
     const p = clamp(p01, 0, 1);
-    // A rollover (p wraps from ~1 back to ~0) is the network's "new day" → open the blinds.
-    if (
+
+    // EPOCH MODULATION — each epoch is a key, a fifth up from the last (the circle of fifths).
+    // The first epoch we see anchors "home"; the rollover Sunrise then LANDS in the new key
+    // (setKey glides the drones beneath the build — each network day in a new light).
+    if (epoch !== undefined && Number.isFinite(epoch)) {
+      if (this.baseEpoch === null) {
+        this.baseEpoch = epoch;
+        this.homeRoot = AUDIO_CONFIG.key.root;
+      } else if (epoch !== this.lastEpochNumber && this.lastEpochNumber !== null && this._started) {
+        const em = AUDIO_CONFIG.director.epochModulation;
+        if (em.enabled) {
+          const semis = (((epoch - this.baseEpoch) * em.stepSemis) % 12 + 12) % 12;
+          this.setKey(transposeRoot(this.homeRoot, semis));
+        }
+        if (AUDIO_CONFIG.epoch.triggerSunriseOnRollover) this.triggerSunrise();
+      }
+      this.lastEpochNumber = epoch;
+    } else if (
+      // Fallback rollover detection (no epoch number provided): p wraps from ~1 back to ~0.
       AUDIO_CONFIG.epoch.triggerSunriseOnRollover &&
       this._started &&
       this.lastEpochP > 0.85 &&
@@ -684,6 +937,7 @@ export class AudioEngine {
     ) {
       this.triggerSunrise();
     }
+
     this.lastEpochP = p;
     if (!this.graph) return;
     this.applyEpoch(p);
@@ -881,6 +1135,341 @@ export class AudioEngine {
     }
   }
 
+  /* ── MOMENTS — rare honest gestures (detectors call these; so do the studio's buttons) ──── */
+
+  get surgeActive(): boolean {
+    return this._surgeActive;
+  }
+
+  /** ⚡ SURGE — the Sunrise's little cousin for activity spikes: a mini-build (energy climbs, the
+   *  riser sweeps, the delay storms at the peak), a short hold, then a long exhale. No key change,
+   *  the kick keeps driving throughout. */
+  triggerSurge(): void {
+    const g = this.guard();
+    if (!g || this._surgeActive || this._sunriseActive) return;
+    const s = AUDIO_CONFIG.moments.surge;
+    this._surgeActive = true;
+    this.lastSurgeAt = Tone.now();
+    this.intensityManual = true;
+
+    const barSec = (60 / AUDIO_CONFIG.tempoBpm) * 4;
+    const buildSec = Math.max(1, s.buildBars * barSec);
+    const holdSec = Math.max(0, s.holdBars * barSec);
+    const releaseSec = Math.max(1, s.releaseBars * barSec);
+    const now = Tone.now();
+
+    try {
+      this.rampIntensityTo(1, buildSec);
+      g.riserGain.gain.cancelScheduledValues(now);
+      g.riserGain.gain.setValueAtTime(0.0001, now);
+      g.riserGain.gain.linearRampToValueAtTime(AUDIO_CONFIG.sunrise.riserGain * 0.7, now + buildSec);
+      g.riserFilter.frequency.cancelScheduledValues(now);
+      g.riserFilter.frequency.setValueAtTime(400, now);
+      g.riserFilter.frequency.exponentialRampToValueAtTime(7000, now + buildSec);
+    } catch {
+      /* noop */
+    }
+
+    this.surgeTimers.push(
+      window.setTimeout(() => {
+        // Peak: cut the riser, throw the delay into a short storm that eases back.
+        const gg = this.graph;
+        if (!gg || !this._surgeActive) return;
+        const t = Tone.now();
+        try {
+          gg.riserGain.gain.cancelScheduledValues(t);
+          gg.riserGain.gain.linearRampToValueAtTime(0.0001, t + 0.2);
+          gg.delay.feedback.rampTo(clamp(s.delayThrow, 0, 0.95), 0.25);
+        } catch {
+          /* noop */
+        }
+      }, buildSec * 1000),
+      window.setTimeout(() => {
+        // Exhale: feedback home, energy settles, control returns to live TPS.
+        const gg = this.graph;
+        if (!gg) return;
+        try {
+          gg.delay.feedback.rampTo(AUDIO_CONFIG.delay.feedback, releaseSec * 0.5);
+        } catch {
+          /* noop */
+        }
+        this.rampIntensityTo(s.settleIntensity, releaseSec);
+      }, (buildSec + holdSec) * 1000),
+      window.setTimeout(() => {
+        this._surgeActive = false;
+        this.intensityManual = false;
+        this.surgeTimers = [];
+      }, (buildSec + holdSec + releaseSec) * 1000),
+    );
+  }
+
+  /** 🐋 DEEP — one whale: a single deep gong on the key root, long tail, the room ringing. */
+  triggerDeep(value01 = 1): void {
+    const g = this.guard();
+    if (!g) return;
+    const d = AUDIO_CONFIG.moments.deep;
+    this.lastDeepAt = Tone.now();
+    const time = this.quantize('8n');
+    const vel = clamp(d.velocity * (0.8 + 0.4 * clamp(value01, 0, 1)), 0.05, 1);
+    try {
+      g.deep.triggerAttackRelease(this.degreeToFreq(0, d.octave), d.dur, time, vel);
+      if (d.subOctaveDown) {
+        g.deep.triggerAttackRelease(this.degreeToFreq(0, d.octave - 1), d.dur * 1.2, time, vel * 0.8);
+      }
+    } catch {
+      /* noop */
+    }
+  }
+
+  /** 𝄽 STUMBLE — the network trips: the kick drops out for a bar; the floor returns after. */
+  triggerStumble(): void {
+    const g = this.guard();
+    if (!g || this._sunriseActive) return; // the Sunrise owns the kick while it runs
+    if (this.arrKickHeld) return; // the arranger's BREAK already has the floor out
+    const st = AUDIO_CONFIG.moments.stumble;
+    this.lastStumbleAt = Tone.now();
+    const kick = g.strips['kick'];
+    if (!kick) return;
+    const barSec = (60 / AUDIO_CONFIG.tempoBpm) * 4;
+    try {
+      kick.level.gain.rampTo(0, 0.06); // the floor falls away
+    } catch {
+      /* noop */
+    }
+    if (this.stumbleTimer !== null) window.clearTimeout(this.stumbleTimer);
+    this.stumbleTimer = window.setTimeout(() => {
+      this.stumbleTimer = null;
+      const gg = this.graph;
+      if (!gg) return;
+      const k = gg.strips['kick'];
+      if (k) {
+        try {
+          k.level.gain.rampTo(this.gateValue(k, k.userLevel), 0.1); // …and returns
+        } catch {
+          /* noop */
+        }
+      }
+    }, Math.max(0.5, st.dropBars * barSec) * 1000);
+  }
+
+  private cancelMoments(): void {
+    for (const t of this.surgeTimers) window.clearTimeout(t);
+    this.surgeTimers = [];
+    if (this._surgeActive) {
+      this._surgeActive = false;
+      this.intensityManual = false;
+    }
+    if (this.stumbleTimer !== null) {
+      window.clearTimeout(this.stumbleTimer);
+      this.stumbleTimer = null;
+      const g = this.graph;
+      const k = g?.strips['kick'];
+      if (k) {
+        try {
+          k.level.gain.rampTo(this.gateValue(k, k.userLevel), 0.1);
+        } catch {
+          /* noop */
+        }
+      }
+    }
+  }
+
+  /* ── THE ARRANGER — chain-chosen 32-bar sections (the phrase-level storytelling) ────────── */
+
+  /** Live arranger state for the desk readout. */
+  get arrangerState(): { section: string; reason: string; bar: number; sectionBars: number } {
+    return {
+      section: this.arrSection,
+      reason: this.arrReason,
+      bar: this.arrBarInSection + 1,
+      sectionBars: AUDIO_CONFIG.arranger.sectionBars,
+    };
+  }
+
+  /** One leader = one bar. Advance the section clock; at the turn, let the chain pick the next. */
+  private arrangerBarTick(): void {
+    if (!AUDIO_CONFIG.arranger.enabled) return;
+    this.arrBarInSection += 1;
+    if (this.arrBarInSection < Math.max(4, AUDIO_CONFIG.arranger.sectionBars)) return;
+
+    // The turn: read what the network DID this section, then choose the next block.
+    const a = AUDIO_CONFIG.arranger;
+    const s = this.arrStats;
+    const avgTps = s.tpsN > 0 ? s.tpsSum / s.tpsN : 0;
+    const baseline = this.arrEmaAtStart ?? this.tpsEma ?? avgTps;
+    const tpsRatio = baseline > 0 ? avgTps / baseline : 1;
+    const missRate = s.slots + s.miss > 0 ? s.miss / (s.slots + s.miss) : 0;
+
+    let next: typeof this.arrSection = 'GROOVE';
+    let reason = 'steady';
+    if (this.arrSection === 'BREAK') {
+      next = 'GROOVE';
+      reason = 'the payoff after the drop';
+    } else if (
+      this.intensityTarget >= a.breakMinIntensity &&
+      this.arrSectionsSinceBreak >= a.minSectionsBetweenBreaks &&
+      !this._sunriseActive &&
+      !this._surgeActive
+    ) {
+      next = 'BREAK';
+      reason = `energy ${this.intensityTarget.toFixed(2)} — earned a breakdown`;
+    } else if (tpsRatio >= a.liftTpsRatio) {
+      next = 'LIFT';
+      reason = `TPS +${Math.round((tpsRatio - 1) * 100)}% vs baseline`;
+    } else if (missRate >= a.dubMissRate || tpsRatio <= a.dubTpsRatio) {
+      next = 'DUB';
+      reason = missRate >= a.dubMissRate ? `missy (${(missRate * 100).toFixed(1)}%)` : `TPS −${Math.round((1 - tpsRatio) * 100)}%`;
+    }
+
+    this.applySection(next, reason);
+  }
+
+  /** Enter a section: reset the per-section overrides, then shape this block. */
+  private applySection(section: 'GROOVE' | 'DUB' | 'LIFT' | 'BREAK', reason: string): void {
+    const g = this.graph;
+    const a = AUDIO_CONFIG.arranger;
+    for (const t of this.arrTimers) window.clearTimeout(t);
+    this.arrTimers = [];
+    this.restoreArrangerKick(); // never carry a held kick across sections
+    this.arrSection = section;
+    this.arrReason = reason;
+    this.arrBarInSection = 0;
+    this.arrSectionsSinceBreak = section === 'BREAK' ? 0 : this.arrSectionsSinceBreak + 1;
+    this.arrEmaAtStart = this.tpsEma;
+    this.arrStats = { slots: 0, miss: 0, tpsSum: 0, tpsN: 0, whales: 0 };
+
+    // Baseline (GROOVE) overrides.
+    this.arrHatMult = 1;
+    this.arrLeadEvery = null;
+    this.arrChordBars = null;
+    this.arrDelayBias = 0;
+
+    const barSec = (60 / AUDIO_CONFIG.tempoBpm) * 4;
+    if (!g) return;
+
+    if (section === 'DUB') {
+      // Strip back: hats recede, melody sparser, harmony slower, echoes deeper.
+      this.arrHatMult = 0.35;
+      this.arrLeadEvery = AUDIO_CONFIG.lead.everySlots * 2;
+      this.arrChordBars = Math.max(2, AUDIO_CONFIG.director.chordChangeEveryBars * 2);
+      this.arrDelayBias = 0.08;
+    } else if (section === 'LIFT') {
+      // Tension: harmonic rhythm accelerates, melody densifies, a riser climbs into the turn.
+      this.arrHatMult = 1.15;
+      this.arrLeadEvery = 1;
+      this.arrChordBars = 1;
+      this.arrDelayBias = 0.1;
+      const riserStartSec = Math.max(0, (a.sectionBars - 8) * barSec);
+      this.arrTimers.push(
+        window.setTimeout(() => {
+          const gg = this.graph;
+          if (!gg || this.arrSection !== 'LIFT' || this._sunriseActive || this._surgeActive) return;
+          const t = Tone.now();
+          try {
+            gg.riserGain.gain.cancelScheduledValues(t);
+            gg.riserGain.gain.setValueAtTime(0.0001, t);
+            gg.riserGain.gain.linearRampToValueAtTime(AUDIO_CONFIG.sunrise.riserGain * 0.5, t + 8 * barSec);
+            gg.riserFilter.frequency.cancelScheduledValues(t);
+            gg.riserFilter.frequency.setValueAtTime(500, t);
+            gg.riserFilter.frequency.exponentialRampToValueAtTime(6500, t + 8 * barSec);
+          } catch {
+            /* noop */
+          }
+        }, riserStartSec * 1000),
+      );
+    } else if (section === 'BREAK') {
+      // The breakdown: the floor vanishes, the pad blooms, a riser climbs — then the DROP.
+      this.arrHatMult = 0;
+      this.arrChordBars = Math.max(4, a.breakKickOutBars); // harmony suspends
+      this.arrDelayBias = 0.06;
+      const kick = g.strips['kick'];
+      if (kick) {
+        this.arrKickHeld = true;
+        try {
+          kick.level.gain.rampTo(0, 0.1);
+        } catch {
+          /* noop */
+        }
+      }
+      try {
+        g.reverbBus.gain.rampTo(1.25, 2); // the room opens while the floor is gone
+      } catch {
+        /* noop */
+      }
+      const outSec = Math.max(1, a.breakKickOutBars * barSec);
+      // riser across the back half of the kick-out
+      this.arrTimers.push(
+        window.setTimeout(() => {
+          const gg = this.graph;
+          if (!gg || this.arrSection !== 'BREAK') return;
+          const t = Tone.now();
+          try {
+            gg.riserGain.gain.cancelScheduledValues(t);
+            gg.riserGain.gain.setValueAtTime(0.0001, t);
+            gg.riserGain.gain.linearRampToValueAtTime(AUDIO_CONFIG.sunrise.riserGain * 0.6, t + outSec / 2);
+            gg.riserFilter.frequency.cancelScheduledValues(t);
+            gg.riserFilter.frequency.setValueAtTime(400, t);
+            gg.riserFilter.frequency.exponentialRampToValueAtTime(8000, t + outSec / 2);
+          } catch {
+            /* noop */
+          }
+        }, (outSec / 2) * 1000),
+        // THE DROP: floor back on the phrase, riser cut, delay throw, one deep hit.
+        window.setTimeout(() => {
+          const gg = this.graph;
+          if (!gg || this.arrSection !== 'BREAK') return;
+          this.restoreArrangerKick();
+          this.arrHatMult = 1.2;
+          const t = Tone.now();
+          try {
+            gg.riserGain.gain.cancelScheduledValues(t);
+            gg.riserGain.gain.linearRampToValueAtTime(0.0001, t + 0.15);
+            gg.reverbBus.gain.rampTo(1, 4);
+            gg.delay.feedback.rampTo(clamp(AUDIO_CONFIG.moments.surge.delayThrow, 0, 0.95), 0.2);
+          } catch {
+            /* noop */
+          }
+          this.arrTimers.push(
+            window.setTimeout(() => {
+              try {
+                this.graph?.delay.feedback.rampTo(AUDIO_CONFIG.delay.feedback, 6);
+              } catch {
+                /* noop */
+              }
+            }, 2500),
+          );
+          this.triggerDeep(0.8); // the hit that lands the drop
+        }, outSec * 1000),
+      );
+    }
+  }
+
+  /** Hand the kick back (drop landed, section changed, or teardown). */
+  private restoreArrangerKick(): void {
+    if (!this.arrKickHeld) return;
+    this.arrKickHeld = false;
+    const k = this.graph?.strips['kick'];
+    if (k) {
+      try {
+        k.level.gain.rampTo(this.gateValue(k, k.userLevel), 0.06);
+      } catch {
+        /* noop */
+      }
+    }
+  }
+
+  private cancelArranger(): void {
+    for (const t of this.arrTimers) window.clearTimeout(t);
+    this.arrTimers = [];
+    this.restoreArrangerKick();
+    this.arrHatMult = 1;
+    this.arrLeadEvery = null;
+    this.arrChordBars = null;
+    this.arrDelayBias = 0;
+    this.arrSection = 'GROOVE';
+    this.arrBarInSection = 0;
+  }
+
   /* ── mixer / FX control (the studio drives these) ──────────────────────────────────────── */
 
   get stripNames(): string[] {
@@ -1022,6 +1611,7 @@ export class AudioEngine {
     AUDIO_CONFIG.key.root = root;
     AUDIO_CONFIG.key.scale = mode.scale.slice();
     AUDIO_CONFIG.key.scaleName = `${root} ${mode.name}`;
+    AUDIO_CONFIG.slot.note = `${root}1`; // the heartbeat sub follows the key (a tuned kick)
     this.cachedRootMidi = null;
     if (!this._sunriseActive) this.activeScale = AUDIO_CONFIG.key.scale;
 
@@ -1074,6 +1664,9 @@ export class AudioEngine {
       case 'ghost':
         g.ghost.triggerAttackRelease(AUDIO_CONFIG.missed.dur, t, AUDIO_CONFIG.missed.velocity);
         break;
+      case 'hat':
+        g.hat.triggerAttackRelease(AUDIO_CONFIG.hat.dur, t, AUDIO_CONFIG.hat.velocity);
+        break;
       case 'pad':
         this.attackChord(this.currentChordDegrees, t);
         break;
@@ -1094,6 +1687,9 @@ export class AudioEngine {
         break;
       case 'tx_stake':
         g.tx.stake.triggerAttackRelease(this.degreeToFreq(this.currentChordDegrees[0], AUDIO_CONFIG.tx.stake.octave), AUDIO_CONFIG.tx.stake.dur, t, AUDIO_CONFIG.tx.stake.velocity);
+        break;
+      case 'deep':
+        this.triggerDeep(1);
         break;
       default:
         break;
@@ -1270,7 +1866,11 @@ export class AudioEngine {
       g.leadIntensityGain.gain.rampTo(i * AUDIO_CONFIG.lead.gainByIntensity, sec);
       g.textureGain.gain.rampTo(i * a.textureGainMax, sec);
       g.textureFilter.frequency.rampTo(lerp(a.textureCutoffMin, a.textureCutoffMax, i), sec);
-      g.delay.feedback.rampTo(lerp(AUDIO_CONFIG.delay.feedback, a.delayFeedbackBusy, i), sec);
+      // The arranger biases the echo depth per section (DUB sinks deeper, LIFT creeps up).
+      g.delay.feedback.rampTo(
+        clamp(lerp(AUDIO_CONFIG.delay.feedback, a.delayFeedbackBusy, i) + this.arrDelayBias, 0, 0.92),
+        sec,
+      );
     } catch {
       /* noop */
     }
@@ -1465,6 +2065,12 @@ export class AudioEngine {
     return this.cachedRootMidi + this.liftSemis; // liftSemis = the Sunrise's temporary key lift
   }
 
+  /** Apply the global tuning offset (0 = concert pitch; −34 = the chain's true measured pitch). */
+  private tuned(freq: number): number {
+    const cents = AUDIO_CONFIG.key.tuningOffsetCents;
+    return cents === 0 ? freq : freq * Math.pow(2, cents / 1200);
+  }
+
   /** Map a scale degree (with octave wrap) to a frequency in the ACTIVE scale (minor, or the bright
    *  scale during the Sunrise). Never chromatic. */
   private degreeToFreq(degree: number, octaveOffset: number): number {
@@ -1473,7 +2079,7 @@ export class AudioEngine {
     const idx = ((degree % len) + len) % len;
     const oct = Math.floor(degree / len) + octaveOffset;
     const midi = this.rootMidi() + scale[idx] + 12 * oct;
-    return Tone.Frequency(midi, 'midi').toFrequency();
+    return this.tuned(Tone.Frequency(midi, 'midi').toFrequency());
   }
 
   /* ── graph construction ────────────────────────────────────────────────────────────────── */
@@ -1575,6 +2181,13 @@ export class AudioEngine {
     });
     makeStrip('kick', kick, { level: AUDIO_CONFIG.slot.gain, reverb: AUDIO_CONFIG.slot.sendReverb, delay: AUDIO_CONFIG.slot.sendDelay });
 
+    // ── Hat (the slot's exhale — off-beat, intensity-gated) ──
+    const hat = reg(new Tone.NoiseSynth());
+    hat.set({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: AUDIO_CONFIG.hat.dur, sustain: 0 } });
+    const hatFilter = reg(new Tone.Filter({ type: 'highpass', frequency: AUDIO_CONFIG.hat.highpassHz, Q: 0.8 }));
+    hat.connect(hatFilter);
+    makeStrip('hat', hatFilter, { level: AUDIO_CONFIG.hat.gain, reverb: AUDIO_CONFIG.hat.sendReverb, delay: AUDIO_CONFIG.hat.sendDelay });
+
     // ── Ghost (missed slot) ──
     const ghost = reg(new Tone.NoiseSynth());
     ghost.set({ noise: { type: 'white' }, envelope: { attack: 0.004, decay: AUDIO_CONFIG.missed.dur, sustain: 0 } });
@@ -1664,6 +2277,16 @@ export class AudioEngine {
     lead.connect(leadIntensityGain);
     makeStrip('lead', leadIntensityGain, { level: 1, reverb: AUDIO_CONFIG.lead.sendReverb, delay: AUDIO_CONFIG.lead.sendDelay });
 
+    // ── Deep gong (the whale voice — one low root, long tail, mostly reverb) ──
+    const deep = new Tone.PolySynth(Tone.Synth);
+    reg(deep);
+    deep.maxPolyphony = 4;
+    deep.set({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.015, decay: 0.9, sustain: 0.4, release: 7 },
+    });
+    makeStrip('deep', deep, { level: 0.5, reverb: 0.8, delay: 0.2 });
+
     // ── Epoch drone ──
     const droneRoot = this.degreeToFreq(AUDIO_CONFIG.epoch.rootDeg, AUDIO_CONFIG.epoch.octave);
     const droneFifth = this.degreeToFreq(AUDIO_CONFIG.epoch.fifthDeg, AUDIO_CONFIG.epoch.octave);
@@ -1708,6 +2331,8 @@ export class AudioEngine {
       pumpDucks,
       reverbReady: reverb.ready,
       kick,
+      hat,
+      hatFilter,
       ghost,
       ghostFilter,
       pad,
@@ -1716,6 +2341,7 @@ export class AudioEngine {
       tx,
       lead,
       leadIntensityGain,
+      deep,
       droneA,
       droneB,
       droneOvertone,

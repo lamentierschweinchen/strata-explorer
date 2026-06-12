@@ -136,7 +136,7 @@ function getChainAudio(strata: Strata) {
         live.tps = Math.round(tps);
         engine.setActivity(tps);
       },
-      onEpochProgress: (p01) => engine.onEpochProgress(p01),
+      onEpochProgress: (p01, epoch) => engine.onEpochProgress(p01, epoch),
       // Epoch rollover (or ?ceremony rehearsal): the engine's sunrise — build, bright
       // lift, back to dark — answers the golden waves. No-op until start()ed.
       onEpochRollover: () => engine.triggerSunrise(),

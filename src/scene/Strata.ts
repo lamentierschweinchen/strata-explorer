@@ -92,7 +92,7 @@ export class Strata {
     onTransactions?: (txs: TransactionInfo[]) => void;
     onFinality?: (rootSlot: number) => void;
     onTps?: (tps: number) => void;
-    onEpochProgress?: (p01: number) => void;
+    onEpochProgress?: (p01: number, epoch?: number) => void;
     /** The rare big moment (real rollover or the ?ceremony rehearsal) — the audio
      *  side answers the golden waves with its own sunrise build. */
     onEpochRollover?: () => void;
@@ -296,7 +296,10 @@ export class Strata {
         // External tap (the ?dj audio overlay hears the same heartbeat the crystal grows by).
         this.eventTap?.onSlot?.(slot, missed);
         this.eventTap?.onLeaderIndex?.(leaderIdx);
-        this.eventTap?.onEpochProgress?.(epochInfo.slotIndex / Math.max(1, epochInfo.slotsInEpoch));
+        this.eventTap?.onEpochProgress?.(
+          epochInfo.slotIndex / Math.max(1, epochInfo.slotsInEpoch),
+          epochInfo.epoch,
+        );
       },
 
       onValidatorsUpdated: (_validators) => {

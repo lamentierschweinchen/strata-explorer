@@ -23,6 +23,7 @@ export interface AudioTestState {
   lastTx: TxType | null;
   tps: number;
   epochP: number;
+  epoch: number;
   finalities: number;
   missed: number;
 }
@@ -79,11 +80,13 @@ export function runAudioTest(engine: AudioEngine, opts: AudioTestOptions = {}): 
     lastTx: null,
     tps: 1500,
     epochP: 0.37,
+    epoch: 650,
     finalities: 0,
     missed: 0,
   };
 
   let tps = state.tps;
+  let surgeWaveLeft = 0; // occasional synthetic activity spike so the ⚡ Surge detector is audible
 
   const id = window.setInterval(() => {
     state.slot += 1;
@@ -119,14 +122,23 @@ export function runAudioTest(engine: AudioEngine, opts: AudioTestOptions = {}): 
       }
     }
 
-    // Continuous density — a smooth random walk into the texture layer (never a note).
-    tps = clamp(tps + (Math.random() - 0.5) * 600, 200, 3800);
+    // Continuous density — a smooth random walk, with occasional sustained spikes (a mint, a
+    // frenzy) so the Surge detector has something real-shaped to catch.
+    if (surgeWaveLeft > 0) {
+      surgeWaveLeft -= 1;
+      tps = clamp(tps + 500, 200, 3800);
+    } else {
+      if (Math.random() < 0.004) surgeWaveLeft = 45; // ~every few minutes, a ~18s wave
+      tps = clamp(tps + (Math.random() - 0.5) * 600, 200, 3800);
+    }
     state.tps = Math.round(tps);
     engine.setActivity(tps);
 
-    // Epoch position drifts (accelerated).
-    state.epochP = (state.epochP + epochPerSlot) % 1;
-    engine.onEpochProgress(state.epochP);
+    // Epoch position drifts (accelerated); the wrap is a new epoch → new key + Sunrise.
+    const nextP = state.epochP + epochPerSlot;
+    if (nextP >= 1) state.epoch += 1;
+    state.epochP = nextP % 1;
+    engine.onEpochProgress(state.epochP, state.epoch);
 
     opts.onTick?.(state);
   }, slotMs);

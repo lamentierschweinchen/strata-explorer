@@ -38,3 +38,18 @@ agreed on what happened — kept forever. All of it live, right now, as you watc
 ## One-liner (labels, captions, intro overlay)
 
 The Solana blockchain as a living crystal, growing with each heartbeat of the network.
+
+---
+
+## ARTIST PLAQUE — postcard (Solana Summit, FINAL 2026-06-12, Lukas's voice)
+
+*The card that sits with the piece. Postcard size, QR bottom area → exploresolana.art (the live interactive experience, where the audience interest is). Bio line carries lookatseel.com as text. This is the artist statement in Lukas's own voice — distinct from the house gallery text above.*
+
+# STRATA
+*The Solana blockchain, rendered as a living crystal and scored, live, by the network itself.*
+
+It is the network, now, as you watch. Each light is a real validator. Each drifting color is real network activity. Each hardened layer, a moment that can never change again. One of the most intricate machines ever built.
+
+**Explore it live → exploresolana.art**  [QR]
+
+*Lukas Seel · artist working with words, sound, and code · lookatseel.com*

@@ -252,6 +252,7 @@ function presetFromHash(): StudioPreset | null {
 
 const STRIP_DEFS: Array<[string, string, string]> = [
   ['kick', 'Kick', 'slot'],
+  ['hat', 'Hat', 'exhale'],
   ['pad', 'Pad', 'leader'],
   ['lead', 'Lead', 'melody'],
   ['swell', 'Swell', 'finality'],
@@ -260,6 +261,7 @@ const STRIP_DEFS: Array<[string, string, string]> = [
   ['tx_nft', 'NFT', 'tx'],
   ['tx_stake', 'Stake', 'tx'],
   ['ghost', 'Ghost', 'missed'],
+  ['deep', 'Deep', 'whale'],
   ['drone', 'Drone', 'epoch'],
   ['texture', 'Texture', 'TPS'],
   ['riser', 'Riser', 'sunrise'],
@@ -315,7 +317,8 @@ export function mountStudio(engine: AudioEngine, opts: StudioMountOptions = {}):
   let destroyed = false;
 
   // readout nodes (rebuilt with the desk)
-  let rSlot: HTMLElement, rBar: HTMLElement, rChord: HTMLElement, rKey: HTMLElement, rTps: HTMLElement, rSun: HTMLElement, iFill: HTMLElement;
+  let rSlot: HTMLElement, rBar: HTMLElement, rChord: HTMLElement, rKey: HTMLElement, rTps: HTMLElement, rSun: HTMLElement, rSection: HTMLElement, iFill: HTMLElement;
+  let lastSection = '';
 
   function readBlock(node: HTMLElement, label: string): HTMLElement {
     const b = el('div', 'read');
@@ -582,6 +585,54 @@ export function mountStudio(engine: AudioEngine, opts: StudioMountOptions = {}):
 
     dir.appendChild(slider('Pump (sidechain depth)', 0, 0.8, 0.01, AUDIO_CONFIG.pump.depth, fmt2, (v) => engine.setPumpDepth(v)));
 
+    // ── MOMENTS — the honest event gestures (manual triggers for tuning by ear; the live
+    // detectors fire the same functions on real network behavior). ──
+    dir.appendChild(el('h3', '', 'MOMENTS — spikes, whales, stumbles (manual triggers)'));
+    const momRow = el('div', 'bar');
+    const surgeBtn = el('button', '', '⚡ SURGE');
+    surgeBtn.addEventListener('click', () => {
+      engine.triggerSurge();
+      showToast('Surge — a 6-bar build, then the exhale');
+    });
+    const deepBtn = el('button', '', '🐋 DEEP');
+    deepBtn.addEventListener('click', () => engine.triggerDeep(1));
+    const stumbleBtn = el('button', '', '𝄽 STUMBLE');
+    stumbleBtn.addEventListener('click', () => {
+      engine.triggerStumble();
+      showToast('Stumble — the kick drops for a bar');
+    });
+    momRow.append(surgeBtn, deepBtn, stumbleBtn);
+    dir.appendChild(momRow);
+
+    // ── ARRANGER — phrase-level storytelling: the chain picks each 32-bar block. ──
+    dir.appendChild(el('h3', '', 'ARRANGER — the chain DJs in 32-bar sections'));
+    const arrRow = el('div', 'bar');
+    const arrBtn = el('button', AUDIO_CONFIG.arranger.enabled ? 'on' : '', '▦ SECTIONS');
+    arrBtn.addEventListener('click', () => {
+      const on = !AUDIO_CONFIG.arranger.enabled;
+      AUDIO_CONFIG.arranger.enabled = on;
+      arrBtn.classList.toggle('on', on);
+      showToast(on ? 'Arranger on — GROOVE/DUB/LIFT/BREAK chosen by chain stats' : 'Arranger off — pure flow');
+    });
+    arrRow.appendChild(arrBtn);
+    dir.appendChild(arrRow);
+    dir.appendChild(slider('Section length (bars)', 8, 64, 4, AUDIO_CONFIG.arranger.sectionBars, fmtInt, (v) => (AUDIO_CONFIG.arranger.sectionBars = v)));
+    dir.appendChild(slider('Break spacing (sections)', 1, 8, 1, AUDIO_CONFIG.arranger.minSectionsBetweenBreaks, fmtInt, (v) => (AUDIO_CONFIG.arranger.minSectionsBetweenBreaks = v)));
+
+    const epochModBtn = el(
+      'button',
+      AUDIO_CONFIG.director.epochModulation.enabled ? 'on' : '',
+      '☉ EPOCH → NEW KEY (fifths)',
+    );
+    epochModBtn.style.marginTop = '8px';
+    epochModBtn.addEventListener('click', () => {
+      const on = !AUDIO_CONFIG.director.epochModulation.enabled;
+      AUDIO_CONFIG.director.epochModulation.enabled = on;
+      epochModBtn.classList.toggle('on', on);
+      showToast(on ? 'Each epoch modulates a fifth up — 12 epochs tours all keys' : 'Epoch key calendar off');
+    });
+    dir.appendChild(epochModBtn);
+
     // Melody source: the tx stream as composer vs. the plain chord arpeggio.
     const melField = el('div', 'field');
     melField.appendChild(el('label', '', 'Transactions write…'));
@@ -774,6 +825,7 @@ export function mountStudio(engine: AudioEngine, opts: StudioMountOptions = {}):
     rKey = el('b', '', AUDIO_CONFIG.key.scaleName);
     rTps = el('b', '', '—');
     rSun = el('b', '', '○');
+    rSection = el('b', '', '—');
     iFill = el('div');
     const ibar = el('div', 'ibar');
     ibar.appendChild(iFill);
@@ -782,6 +834,7 @@ export function mountStudio(engine: AudioEngine, opts: StudioMountOptions = {}):
       readBlock(rBar, 'BAR'),
       readBlock(rKey, 'KEY'),
       readBlock(rChord, 'CHORD'),
+      readBlock(rSection, 'SECTION'),
       readBlock(rTps, 'TPS'),
       readBlock(rSun, 'SUNRISE'),
       (() => {
@@ -813,6 +866,12 @@ export function mountStudio(engine: AudioEngine, opts: StudioMountOptions = {}):
     if (rTps) rTps.textContent = r.tps !== undefined ? r.tps.toLocaleString('en-US') : '—';
     if (rChord) rChord.textContent = engine.currentChordName;
     if (rKey) rKey.textContent = engine.currentKey.name;
+    const arr = engine.arrangerState;
+    if (rSection) rSection.textContent = AUDIO_CONFIG.arranger.enabled ? `${arr.section} ${arr.bar}/${arr.sectionBars}` : 'off';
+    if (arr.section !== lastSection) {
+      if (lastSection !== '') showToast(`Section → ${arr.section} (${arr.reason})`);
+      lastSection = arr.section;
+    }
     if (iFill) iFill.style.width = `${Math.round(engine.intensity * 100)}%`;
     if (rSun) {
       rSun.textContent = engine.sunriseActive ? '☀ OPEN' : '○';
