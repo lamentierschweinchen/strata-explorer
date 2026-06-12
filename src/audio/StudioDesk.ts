@@ -28,8 +28,16 @@ export interface StudioMountOptions {
   overlay?: boolean;
   /** Live readouts the desk can't know itself (slot/bar/tps from the driving chain). */
   readouts?: () => StudioReadouts;
-  /** Synthetic-chain controls (standalone only) — hidden when absent (the live chain never stops). */
-  chain?: { running: () => boolean; stop: () => void; start: () => void } | null;
+  /** What's driving the engine — shown in the header ('LIVE' / 'DEMO'). */
+  sourceLabel?: string;
+  /** Synthetic-chain controls (standalone only) — hidden when absent (the live chain never stops).
+   *  setEpochSweepSec adjusts the DEMO epoch pace (the real chain's epoch is ~2 days). */
+  chain?: {
+    running: () => boolean;
+    stop: () => void;
+    start: () => void;
+    setEpochSweepSec?: (sec: number) => void;
+  } | null;
 }
 
 export interface StudioHandle {
@@ -116,6 +124,19 @@ const CSS = `
     background:rgba(5,5,16,0.8);border:1px solid rgba(255,255,255,0.25);color:rgba(255,255,255,0.85);
     border-radius:999px;padding:10px 18px;font-size:11px;letter-spacing:2px;cursor:pointer;backdrop-filter:blur(8px)}
   .sdsk-fab:hover{background:rgba(255,255,255,0.12)}
+  .sdsk-explain{position:fixed;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;
+    background:rgba(3,3,10,0.82);backdrop-filter:blur(10px);cursor:pointer;
+    font-family:'SF Mono','Fira Code',ui-monospace,monospace}
+  .sdsk-explain .card{max-width:640px;max-height:86vh;overflow-y:auto;margin:20px;padding:30px 34px;
+    background:rgba(8,8,20,0.96);border:1px solid rgba(255,255,255,0.14);border-radius:14px;cursor:auto;
+    color:rgba(255,255,255,0.82);font-size:12.5px;line-height:1.75}
+  .sdsk-explain h1{font-size:15px;letter-spacing:3px;font-weight:400;margin:0 0 4px;color:#fff}
+  .sdsk-explain .sub{color:rgba(255,255,255,0.45);margin-bottom:18px}
+  .sdsk-explain .row{display:flex;gap:12px;margin:9px 0;align-items:baseline}
+  .sdsk-explain .row b{flex:0 0 96px;font-weight:400;color:#bff4e6;font-size:11.5px}
+  .sdsk-explain .foot{margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.1);
+    color:rgba(255,255,255,0.5);font-style:italic}
+  .sdsk-explain .x{float:right;color:rgba(255,255,255,0.4);cursor:pointer;font-size:14px;padding:2px 8px}
 `;
 
 /* ── small DOM helpers ────────────────────────────────────────────────────────────────────── */
@@ -197,11 +218,39 @@ const FACTORY_PRESETS: Array<{ name: string; preset: StudioPreset }> = [
     preset: {
       v: 1,
       config: {
-        key: { scale: [0, 2, 3, 5, 7, 9, 10], scaleName: 'A Dorian' },
         pump: { depth: 0.35 },
         reverb: { decaySec: 13 },
         director: { chordChangeEveryBars: 2, autoCycleMin: 8 },
         sunrise: { buildBars: 32, lightBars: 10, closeBars: 3 },
+      },
+    },
+  },
+  {
+    // Lukas' first signed-off mix (2026-06-12, shared from exploresolana.art): the tx melody
+    // pushed way forward, kick near unity. MIXER ONLY — the key stays wherever the music is
+    // (home E; the epoch calendar walks it). The gallery-default candidate.
+    name: "Lukas' Mix",
+    preset: {
+      v: 1,
+      config: {
+        eq: { lowFrequency: 355 },
+      },
+      strips: {
+        kick: { level: 0.98, reverb: 0.08, delay: 0, muted: false },
+        hat: { level: 0.81, reverb: 0.1, delay: 0.18, muted: false },
+        ghost: { level: 0.95, reverb: 0.3, delay: 0.28, muted: false },
+        pad: { level: 0.18, reverb: 0.5, delay: 0.15, muted: false },
+        swell: { level: 0.22, reverb: 0.7, delay: 0.2, muted: false },
+        tx_transfer: { level: 0.31, reverb: 0.35, delay: 0.3, muted: false },
+        tx_defi: { level: 0.44, reverb: 0.4, delay: 0.45, muted: false },
+        tx_nft: { level: 0.5, reverb: 0.45, delay: 0.6, muted: false },
+        tx_stake: { level: 0.65, reverb: 0.3, delay: 0.15, muted: false },
+        lead: { level: 0.93, reverb: 0.45, delay: 0.55, muted: false },
+        deep: { level: 0.68, reverb: 0.8, delay: 0.2, muted: false },
+        drone: { level: 0.17, reverb: 0.5, delay: 0, muted: false },
+        texture: { level: 0.91, reverb: 0.4, delay: 0, muted: false },
+        riser: { level: 1, reverb: 0.5, delay: 0.3, muted: false },
+        bed: { level: 0.5, reverb: 0.15, delay: 0.15, muted: false },
       },
     },
   },
@@ -270,6 +319,25 @@ const STRIP_DEFS: Array<[string, string, string]> = [
 
 // Root chips in circle-of-fifths order — neighbours are musically near.
 const ROOTS = ['A', 'E', 'B', 'F#', 'C#', 'G#', 'D#', 'A#', 'F', 'C', 'G', 'D'];
+
+/** The "what the hell is happening?" card — every sound, mapped to its on-chain cause.
+ *  (Canonical copy: src/audio/HOW-TO-HEAR.md — keep the two in sync.) */
+const EXPLAINER_HTML = `
+  <span class="x">✕</span>
+  <h1>HOW TO HEAR THE STRATA</h1>
+  <div class="sub">Every sound is a real event on Solana, happening now. Nothing is looped, nothing is faked.</div>
+  <div class="row"><b>the kick</b><span>a block (a “slot”), ~2.5 per second — the network's heartbeat. The off-beat hat is the same block's exhale; it fades in as the network gets busy.</span></div>
+  <div class="row"><b>a skipped beat</b><span>+ a hiss of static = a slot the leader missed. Several in a row and the whole floor stumbles — the kick drops out for a bar.</span></div>
+  <div class="row"><b>the melody</b><span>written by transactions, one note each: transfers step up, DeFi steps down, NFTs leap, staking pulls the line home (the bassline). Louder notes are bigger transactions.</span></div>
+  <div class="row"><b>a deep gong</b><span>a whale — one enormous transaction, rung once.</span></div>
+  <div class="row"><b>the chords</b><span>a new validator leads the network every 4 beats (one bar); the harmony moves with the leader schedule.</span></div>
+  <div class="row"><b>the swell</b><span>finality — every ~12 seconds the chain makes its recent past irreversible, and the music resolves with it.</span></div>
+  <div class="row"><b>the air</b><span>the bright hiss riding above everything is live TPS — transactions per second, as texture.</span></div>
+  <div class="row"><b>the sections</b><span>every 32 bars the music re-reads the network: heating up → it builds; cooling → it strips back to dub; spending high energy → the kick vanishes… and drops.</span></div>
+  <div class="row"><b>the sunrise</b><span>every ~2 days an epoch ends — the validator schedule turns over. The whole piece builds, daylight opens (the harmony lifts to major), and the key steps a fifth: the network's new day, in a new light.</span></div>
+  <div class="row"><b>the key</b><span>E — derived, not chosen: one slot every 396ms is a frequency, and five octaves up that frequency <i>is</i> an E. The blockchain hums it; we just tuned to it.</span></div>
+  <div class="foot">The crystal is the network made visible. This is the network made audible — the same events, the same moment, scoring itself.</div>
+`;
 
 export function mountStudio(engine: AudioEngine, opts: StudioMountOptions = {}): StudioHandle {
   const root = opts.root ?? document.body;
@@ -619,6 +687,15 @@ export function mountStudio(engine: AudioEngine, opts: StudioMountOptions = {}):
     dir.appendChild(slider('Section length (bars)', 8, 64, 4, AUDIO_CONFIG.arranger.sectionBars, fmtInt, (v) => (AUDIO_CONFIG.arranger.sectionBars = v)));
     dir.appendChild(slider('Break spacing (sections)', 1, 8, 1, AUDIO_CONFIG.arranger.minSectionsBetweenBreaks, fmtInt, (v) => (AUDIO_CONFIG.arranger.minSectionsBetweenBreaks = v)));
 
+    // Demo-only: how fast the synthetic chain sweeps an "epoch" (real network: ~2 days).
+    if (opts.chain?.setEpochSweepSec) {
+      dir.appendChild(
+        slider('Epoch demo pace (min — real: ~2 days)', 2, 30, 1, 10, fmtInt, (v) =>
+          opts.chain!.setEpochSweepSec!(v * 60),
+        ),
+      );
+    }
+
     const epochModBtn = el(
       'button',
       AUDIO_CONFIG.director.epochModulation.enabled ? 'on' : '',
@@ -808,6 +885,18 @@ export function mountStudio(engine: AudioEngine, opts: StudioMountOptions = {}):
     return bar;
   }
 
+  /** The "what the hell is happening?" card — click anywhere outside (or ✕) to dismiss. */
+  function openExplainer(): void {
+    if (document.querySelector('.sdsk-explain')) return;
+    const veil = el('div', 'sdsk-explain');
+    const card = el('div', 'card', EXPLAINER_HTML);
+    card.addEventListener('click', (e) => e.stopPropagation());
+    card.querySelector('.x')?.addEventListener('click', () => veil.remove());
+    veil.addEventListener('click', () => veil.remove());
+    veil.appendChild(card);
+    document.body.appendChild(veil);
+  }
+
   /* — assembly + readout loop — */
 
   function renderDesk(): void {
@@ -817,7 +906,11 @@ export function mountStudio(engine: AudioEngine, opts: StudioMountOptions = {}):
 
     const wrap = el('div', 'wrap');
     const hdr = el('div', 'hdr');
-    hdr.append(el('div', 't', overlay ? 'STRATA · DJ' : 'STRATA · STUDIO'));
+    const title = `${overlay ? 'STRATA · DJ' : 'STRATA · STUDIO'}${opts.sourceLabel ? ' · ' + opts.sourceLabel : ''}`;
+    hdr.append(el('div', 't', title));
+    const helpBtn = el('button', '', '? how to hear it');
+    helpBtn.addEventListener('click', openExplainer);
+    hdr.appendChild(helpBtn);
     const reads = el('div', 'reads');
     rSlot = el('b', '', '—');
     rBar = el('b', '', '—');

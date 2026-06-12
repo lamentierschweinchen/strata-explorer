@@ -35,7 +35,8 @@ export interface AudioTestOptions {
   missedRate?: number;
   /** Max transactions fired per produced slot. Default 3. */
   txPerSlotMax?: number;
-  /** Seconds for one full epoch sweep (accelerated for audibility). Default 180. */
+  /** Seconds for one full epoch sweep — accelerated vs the real ~2 days so the key calendar and
+   *  Sunrise are auditable. Default 600 (one "network day" every 10 minutes). */
   epochSweepSec?: number;
   /** Called after every slot tick with the latest state (for UI readouts). */
   onTick?: (s: Readonly<AudioTestState>) => void;
@@ -43,6 +44,8 @@ export interface AudioTestOptions {
 
 export interface AudioTestHandle {
   stop(): void;
+  /** Change the epoch demo speed live (the studio's "epoch demo" slider). */
+  setEpochSweepSec(sec: number): void;
   readonly state: Readonly<AudioTestState>;
 }
 
@@ -69,8 +72,7 @@ export function runAudioTest(engine: AudioEngine, opts: AudioTestOptions = {}): 
   const slotMs = opts.slotMs ?? 396;
   const missedRate = opts.missedRate ?? 0.04;
   const txPerSlotMax = opts.txPerSlotMax ?? 3;
-  const epochSweepSec = opts.epochSweepSec ?? 180;
-  const epochPerSlot = slotMs / 1000 / epochSweepSec;
+  let epochSweepSec = opts.epochSweepSec ?? 600;
 
   // Start mid-epoch on a plausible mainnet slot number so the readouts look real.
   const state: AudioTestState = {
@@ -135,7 +137,7 @@ export function runAudioTest(engine: AudioEngine, opts: AudioTestOptions = {}): 
     engine.setActivity(tps);
 
     // Epoch position drifts (accelerated); the wrap is a new epoch → new key + Sunrise.
-    const nextP = state.epochP + epochPerSlot;
+    const nextP = state.epochP + slotMs / 1000 / epochSweepSec;
     if (nextP >= 1) state.epoch += 1;
     state.epochP = nextP % 1;
     engine.onEpochProgress(state.epochP, state.epoch);
@@ -146,6 +148,9 @@ export function runAudioTest(engine: AudioEngine, opts: AudioTestOptions = {}): 
   return {
     stop(): void {
       window.clearInterval(id);
+    },
+    setEpochSweepSec(sec: number): void {
+      epochSweepSec = Math.max(30, sec);
     },
     get state(): Readonly<AudioTestState> {
       return state;

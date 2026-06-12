@@ -253,10 +253,14 @@ export const AUDIO_CONFIG = {
     sendDelay: 0.15,
   },
 
-  /** FINALITY — a slow resolving swell on the tonic triad. */
+  /** FINALITY — a slow resolving swell on the tonic triad. On the LIVE chain the root advances
+   *  almost every slot (finality is a continuous march, ~31 slots behind the tip), so the swell
+   *  SAMPLES it — at most one swell per minIntervalSec, matching the felt ~12s cadence. Same
+   *  sampling discipline as the transaction shimmer. */
   finality: {
     chord: [0, 2, 4],
     octave: 1,
+    minIntervalSec: 10,
     gain: 0.22,
     velocity: 0.5,
     attack: 2.5,
@@ -517,9 +521,8 @@ export class AudioEngine {
   private modeKey = 'dorian';
   private liftSemis = 0;
 
-  // Epoch→key modulation: the first epoch seen anchors "home"; later epochs step fifths from it.
-  private homeRoot: string = AUDIO_CONFIG.key.root;
-  private baseEpoch: number | null = null;
+  // Epoch→key modulation: each new epoch steps a fifth FROM THE CURRENT KEY — so manual key
+  // choices and restored presets re-anchor the calendar, and the network walks on from there.
   private lastEpochNumber: number | null = null;
 
   // Moment detectors: trailing-average TPS (surge), cooldown stamps, missed-slot ring (stumble).
@@ -552,6 +555,7 @@ export class AudioEngine {
   private lastHatTime = 0;
   private lastGhostTime = 0;
   private lastTxTime = 0;
+  private lastFinalityAt = -Infinity;
 
   // ── The Arranger: phrase/section state on the leader-bar clock. The clock is musical
   // convention; the section CHOICE is the chain's (stats gathered per section, read at the turn).
@@ -809,6 +813,10 @@ export class AudioEngine {
     const g = this.guard();
     if (!g) return;
     const c = AUDIO_CONFIG.finality;
+    // Sample the continuous root march — on the live chain this fires ~every slot.
+    const nowS = Tone.now();
+    if (nowS - this.lastFinalityAt < c.minIntervalSec) return;
+    this.lastFinalityAt = nowS;
     const time = this.quantize(c.quantize);
 
     const f = g.swellFilter.frequency;
@@ -916,18 +924,18 @@ export class AudioEngine {
     // The first epoch we see anchors "home"; the rollover Sunrise then LANDS in the new key
     // (setKey glides the drones beneath the build — each network day in a new light).
     if (epoch !== undefined && Number.isFinite(epoch)) {
-      if (this.baseEpoch === null) {
-        this.baseEpoch = epoch;
-        this.homeRoot = AUDIO_CONFIG.key.root;
-      } else if (epoch !== this.lastEpochNumber && this.lastEpochNumber !== null && this._started) {
+      if (this.lastEpochNumber !== null && epoch !== this.lastEpochNumber && this._started) {
         const em = AUDIO_CONFIG.director.epochModulation;
         if (em.enabled) {
-          const semis = (((epoch - this.baseEpoch) * em.stepSemis) % 12 + 12) % 12;
-          this.setKey(transposeRoot(this.homeRoot, semis));
+          // Walk fifths FROM THE CURRENT KEY: a manual key choice or a restored preset becomes
+          // the new anchor, and the network's calendar keeps walking from wherever you took it.
+          const delta = epoch - this.lastEpochNumber;
+          const semis = ((em.stepSemis * delta) % 12 + 12) % 12;
+          if (semis !== 0) this.setKey(transposeRoot(AUDIO_CONFIG.key.root, semis));
         }
         if (AUDIO_CONFIG.epoch.triggerSunriseOnRollover) this.triggerSunrise();
       }
-      this.lastEpochNumber = epoch;
+      this.lastEpochNumber = epoch; // first sighting just anchors the calendar
     } else if (
       // Fallback rollover detection (no epoch number provided): p wraps from ~1 back to ~0.
       AUDIO_CONFIG.epoch.triggerSunriseOnRollover &&
