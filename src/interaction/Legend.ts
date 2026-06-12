@@ -55,13 +55,13 @@ const ROWS: LegendRow[] = [
     symbol: CRYSTAL_GLYPH,
     label: 'The crystal',
     meaning:
-      "The crystal at the center is the network's timeline. It grows a new layer every time Solana agrees on what just happened. It never branches, and it never rewrites itself.",
+      "The crystal at the center is the network's timeline. It grows a new layer every time the network agrees on what just happened. It never branches, and it never rewrites itself.",
   },
   {
     symbol: LIGHTDARK_SWATCH,
     label: 'Light and dark',
     meaning:
-      'The newest layers glow. The oldest harden into dark rock. Once a layer settles it can never change again. It becomes part of the record, forever.',
+      "The newest layers glow. The oldest harden into dark rock. Once a layer settles it can never change again. It becomes part of the blockchain's record, forever.",
   },
   {
     symbol: '<span style="color:#ffc850;font-size:13px;">&#9679;</span>',
@@ -73,7 +73,7 @@ const ROWS: LegendRow[] = [
     symbol: '<span style="color:#fff0cc;font-size:12px;">&#10022;</span>',
     label: 'The flare',
     meaning:
-      'Every fraction of a second, one validator is chosen to lay the next layer. It flares, and light reaches in toward the crystal.',
+      'Every fraction of a second, one validator is chosen to create the next layer. It flares, and light reaches in toward the crystal.',
   },
   {
     symbol: TX_COLORS.map(
@@ -87,7 +87,7 @@ const ROWS: LegendRow[] = [
   {
     symbol: '<span style="color:#cdb87a;font-size:13px;">&#9676;</span>',
     label: 'The ripples',
-    meaning: 'When a ripple rolls outward, a new block has just spread across the whole network at once.',
+    meaning: 'Each ripple is a new block reaching every validator in the network.',
   },
 ];
 
