@@ -50,6 +50,9 @@ export class InfoOverlay {
   // Toggle button (mobile only — desktop keeps the feed always visible)
   private toggleBtn: HTMLDivElement | null = null;
 
+  // Share-on-X button (bottom-left, beside the legend)
+  private shareBtn: HTMLAnchorElement | null = null;
+
   // Leader label
   private leaderLabel: HTMLDivElement;
   private leaderWorldPos = new THREE.Vector3();
@@ -121,6 +124,44 @@ export class InfoOverlay {
     const bound = () => this.toggle();
     this.boundToggle = bound;
     this.toggleBtn.addEventListener('click', bound);
+
+    // --- Share on X (bottom-left, beside the legend's crystal button) ---
+    const shareText = 'STRATA — the Solana blockchain, alive. by @chessucation';
+    this.shareBtn = document.createElement('a');
+    this.shareBtn.href =
+      'https://x.com/intent/post?text=' + encodeURIComponent(shareText) +
+      '&url=' + encodeURIComponent('https://exploresolana.art');
+    this.shareBtn.target = '_blank';
+    this.shareBtn.rel = 'noopener noreferrer';
+    this.shareBtn.title = 'Share on X · @chessucation';
+    Object.assign(this.shareBtn.style, {
+      position: 'absolute',
+      bottom: mobile ? '16px' : '24px',
+      left: mobile ? '60px' : '74px',
+      width: mobile ? '32px' : '36px',
+      height: mobile ? '32px' : '36px',
+      borderRadius: '50%',
+      background: GLASS_BG,
+      backdropFilter: GLASS_BLUR,
+      WebkitBackdropFilter: GLASS_BLUR,
+      border: `1px solid ${GLASS_BORDER}`,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: '20',
+      pointerEvents: 'auto', // #hud is pointer-events:none — opt back in
+      transition: 'border-color 0.2s ease',
+    });
+    this.shareBtn.innerHTML =
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="rgba(255,255,255,0.6)">' +
+      '<path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>';
+    this.shareBtn.addEventListener('mouseenter', () => {
+      if (this.shareBtn) this.shareBtn.style.borderColor = 'rgba(255,255,255,0.45)';
+    });
+    this.shareBtn.addEventListener('mouseleave', () => {
+      if (this.shareBtn) this.shareBtn.style.borderColor = GLASS_BORDER;
+    });
+    this.hud.appendChild(this.shareBtn);
 
     // --- Leader label ---
     this.leaderLabel = document.createElement('div');
@@ -386,7 +427,7 @@ export class InfoOverlay {
    */
   setPresentation(presenting: boolean): void {
     this.presenting = presenting;
-    const els: (HTMLElement | null)[] = [this.feedPanel, this.leaderLabel, this.toggleBtn];
+    const els: (HTMLElement | null)[] = [this.feedPanel, this.leaderLabel, this.toggleBtn, this.shareBtn];
     for (const el of els) {
       if (!el) continue;
       el.style.transition = 'opacity 1.2s ease';
@@ -437,6 +478,7 @@ export class InfoOverlay {
     }
 
     if (this.toggleBtn?.parentNode) this.toggleBtn.parentNode.removeChild(this.toggleBtn);
+    if (this.shareBtn?.parentNode) this.shareBtn.parentNode.removeChild(this.shareBtn);
     if (this.leaderLabel.parentNode) this.leaderLabel.parentNode.removeChild(this.leaderLabel);
     if (this.feedPanel.parentNode) this.feedPanel.parentNode.removeChild(this.feedPanel);
 
