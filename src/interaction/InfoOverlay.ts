@@ -110,6 +110,9 @@ export class InfoOverlay {
       color: 'rgba(255,255,255,0.7)',
       userSelect: 'none',
       transition: 'border-color 0.2s ease, color 0.2s ease',
+      // #hud is pointer-events:none (the canvas owns the mouse) — interactive children
+      // must opt back in, or the button is a ghost: visible but unclickable.
+      pointerEvents: 'auto',
     });
     this.toggleBtn.textContent = 'i';
     this.toggleBtn.title = 'Network info: live transactions and the current leader';

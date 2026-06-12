@@ -276,6 +276,8 @@ export class Strata {
         this.hud.updateSlot(slot);
         const epochInfo = this.dataSource.getEpochInfo();
         this.hud.updateEpoch(epochInfo.epoch);
+        const totalTx = this.dataSource.getTotalTransactions?.() ?? 0;
+        if (totalTx > 0) this.hud.updateTransactions(totalTx);
 
         // Epoch rollover — a real, rare event: the leader schedule turns over.
         if (this.lastEpoch >= 0 && epochInfo.epoch > this.lastEpoch) this.epochCeremony();

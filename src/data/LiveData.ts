@@ -243,6 +243,7 @@ export class LiveSolanaData implements SolanaDataSource {
 
   private rng = seededRandom(0xc0ffee);
   private targetTps = 900; // refined from getRecentPerformanceSamples
+  private totalTransactions = 0; // lifetime ledger count via getTransactionCount (0 until first poll)
 
   async initialize(): Promise<void> {
     const e = await rpc<EpochInfoResult>('getEpochInfo');
@@ -345,6 +346,11 @@ export class LiveSolanaData implements SolanaDataSource {
     }
   }
 
+  /** Lifetime ledger transaction count (the HUD's big TRANSACTIONS stat, ~hundreds of B). */
+  private async refreshTxCount(): Promise<void> {
+    this.totalTransactions = await rpc<number>('getTransactionCount');
+  }
+
   start(callbacks: SolanaCallbacks): void {
     this.callbacks = callbacks;
     this.stopped = false;
@@ -373,6 +379,15 @@ export class LiveSolanaData implements SolanaDataSource {
       window.setInterval(() => {
         this.refreshTps().catch(() => {});
       }, PERF_REFRESH_MS),
+    );
+
+    // Lifetime tx count: kick once now (HUD shows '—' until the first sample), then
+    // every 10s — at mainnet throughput the B-stat visibly ticks between refreshes.
+    this.refreshTxCount().catch(() => {});
+    this.timers.push(
+      window.setInterval(() => {
+        this.refreshTxCount().catch(() => {});
+      }, 10_000),
     );
   }
 
@@ -747,5 +762,9 @@ export class LiveSolanaData implements SolanaDataSource {
 
   getTps(): number {
     return Math.round(this.targetTps);
+  }
+
+  getTotalTransactions(): number {
+    return this.totalTransactions;
   }
 }

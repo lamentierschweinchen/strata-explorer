@@ -81,8 +81,8 @@ const SHOTS: readonly Shot[] = [
     // The piece names itself on the gallery screen: the title card opens the first
     // cycle, then alternates with the heartbeat line (captions rotate per cycle).
     captions: [
-      'THE STRATA · the Solana blockchain, alive',
-      'Every fraction of a second, the network agrees, and the crystal grows.',
+      'STRATA — The Solana blockchain, alive',
+      'The network agrees, and the crystal grows.',
     ],
   },
   {
@@ -91,7 +91,7 @@ const SHOTS: readonly Shot[] = [
     moveBars: 3, holdBars: 2,
     captions: [
       'The newest layers glow.',
-      'The growth front: the newest block.',
+      'Each crystal is a block.',
     ],
     showRecentRing: true,
   },
@@ -101,29 +101,29 @@ const SHOTS: readonly Shot[] = [
     moveBars: 4, holdBars: 2,
     captions: [
       'At the burning band, each layer becomes final.',
-      'Twelve seconds in, the past is locked in place.',
+      'Twelve seconds in, information crystallizes into truth.',
     ],
   },
   {
     name: 'settle-tail', look: 'tailFade',
     radius: 124, height: -16, azOffset: 0.10, azAdvance: 0.16,
     moveBars: 4, holdBars: 2,
-    captions: ['The oldest harden into rock.'],
+    captions: ['And the crystal hardens into rock.'],
   },
   {
     name: 'pull-wide', look: 'brightCentroid',
     radius: 188, height: 64, azOffset: 0.0, azAdvance: 0.30,
     moveBars: 5, holdBars: 3,
     captions: [
-      'Each point of light is a real validator.',
-      'Thousands of machines, holding one shared truth.',
+      'Each point of light is a validator.',
+      'Thousands of machines, holding one shared record.',
     ],
   },
   {
     name: 'orbit-wide', look: 'brightCentroid',
     radius: 182, height: 40, azOffset: 0.52, azAdvance: 0.20,
     moveBars: 4, holdBars: 2,
-    captions: ['Nothing here is invented. It is all happening, right now.'],
+    captions: ['This is the Solana blockchain, right now.'],
   },
 ];
 

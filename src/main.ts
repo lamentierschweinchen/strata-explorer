@@ -14,7 +14,7 @@ const DEFAULT_PRESET: StudioPreset | null = null;
 
 /** Diegetic loading copy (canonical: COPY.md). */
 const LOADING_COPY = {
-  connecting: 'Reaching the Solana network…',
+  connecting: 'Connecting to the Solana network…',
   demo: 'Crystallizing a recent memory of the network…',
   fallback: 'Can’t reach the network. Crystallizing a recent memory instead…',
 } as const;

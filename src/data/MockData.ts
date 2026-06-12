@@ -114,6 +114,12 @@ export class MockSolanaData implements SolanaDataSource {
     };
   }
 
+  getTotalTransactions(): number {
+    // A plausible lifetime ledger count that ticks with the simulated chain
+    // (~2.4k tx landing per slot on top of a mainnet-scale base).
+    return 287_400_000_000 + (this.currentSlot - 280_000_000) * 2_400;
+  }
+
   private generateValidators(): void {
     for (let i = 0; i < CONFIG.VALIDATOR_COUNT; i++) {
       const stake = logNormal(this.rng, 13.3, 1.2); // median ~620K SOL

@@ -356,7 +356,9 @@ export class RingInfoLayer {
     this.cardH = this.card.offsetHeight;
   }
 
-  /** Map the crystal's zone to one human line. */
+  /** Map the crystal's zone to one human line — ONE language (crystal-speak), three
+   *  stages: forming → crystallizing → finalized (setting + ember share a word; the
+   *  viewer can't see a difference that needs two). */
   private static zoneLine(d: CrystalFacts): string {
     if (d.finalized || d.zone === 'matrix') return 'Finalized forever';
     switch (d.zone) {
@@ -364,9 +366,8 @@ export class RingInfoLayer {
       case 'young':
         return 'Forming now';
       case 'setting':
-        return 'Crystallizing';
       case 'ember':
-        return 'Finalizing';
+        return 'Crystallizing';
       default:
         return 'Forming now';
     }

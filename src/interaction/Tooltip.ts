@@ -42,16 +42,18 @@ export class Tooltip {
     const isLeader = this.leaderPubkey !== null && validator.pubkey === this.leaderPubkey;
     const isActive = validator.lastVote >= this.currentSlot - 5;
 
+    // Human card (canonical: COPY.md) — no STAKE/COMMISSION/EPOCH CREDITS jargon:
+    // what it committed, when it last agreed, whether it's here.
     const stakeFormatted = this.formatStake(validator.stake);
-    const lastVoteFormatted = this.formatNumber(validator.lastVote);
-    const epochCreditsFormatted = this.formatNumber(validator.epochCredits);
+    const agreedSecs = Math.max(0, this.currentSlot - validator.lastVote) * 0.4;
+    const lastAgreed = agreedSecs < 2 ? 'just now' : `${Math.round(agreedSecs)}s ago`;
 
     const leaderBadge = isLeader
-      ? `<div style="color: #d4a017; font-size: 10px; font-weight: 600; margin: 4px 0 2px 0;">★ LEADER</div>`
+      ? `<div style="color: #d4a017; font-size: 10px; font-weight: 600; margin: 4px 0 2px 0;">★ LAYING THE NEXT LAYER</div>`
       : '';
 
     const statusColor = isActive ? '#4ade80' : '#ef4444';
-    const statusText = isActive ? 'Active' : 'Delinquent';
+    const statusText = isActive ? 'Active' : 'Offline';
 
     this.el.innerHTML = `
       <div style="font-size: 13px; font-weight: 700; color: #e8eaed; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
@@ -59,15 +61,11 @@ export class Tooltip {
       </div>
       ${leaderBadge}
       <div style="display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin-top: 6px;">
-        <span style="color: #6b7080;">STAKE</span>
+        <span style="color: #6b7080;">Committed</span>
         <span style="text-align: right;">${stakeFormatted} SOL</span>
-        <span style="color: #6b7080;">COMMISSION</span>
-        <span style="text-align: right;">${validator.commission}%</span>
-        <span style="color: #6b7080;">LAST VOTE</span>
-        <span style="text-align: right;">${lastVoteFormatted}</span>
-        <span style="color: #6b7080;">EPOCH CREDITS</span>
-        <span style="text-align: right;">${epochCreditsFormatted}</span>
-        <span style="color: #6b7080;">STATUS</span>
+        <span style="color: #6b7080;">Last agreed</span>
+        <span style="text-align: right;">${lastAgreed}</span>
+        <span style="color: #6b7080;">Status</span>
         <span style="text-align: right; color: ${statusColor}; font-weight: 600;">${statusText}</span>
       </div>
       <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.06); color: #4a4d56; font-size: 10px;">

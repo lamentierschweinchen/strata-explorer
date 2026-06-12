@@ -13,6 +13,8 @@ export interface SolanaDataSource {
   getEpochInfo(): EpochInfo;
   /** Real network TPS for the HUD headline (optional; HUD falls back to particle spawn rate). */
   getTps?(): number;
+  /** Lifetime transaction count of the chain (optional) — the HUD's big TRANSACTIONS stat. */
+  getTotalTransactions?(): number;
 }
 
 export interface SolanaCallbacks {

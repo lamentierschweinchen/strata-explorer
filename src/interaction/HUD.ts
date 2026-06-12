@@ -1,13 +1,13 @@
 /**
- * Minimal HUD overlay — slot/epoch, validator count, TPS.
- * HTML elements positioned absolutely within #hud container.
+ * Minimal HUD overlay — slot/epoch, validator count, lifetime transactions.
+ * Live TPS shows only at the bottom activity bar. Absolutely positioned in #hud.
  */
 export class HUD {
   private container: HTMLElement;
   private slotEl: HTMLElement;
   private epochEl: HTMLElement;
   private validatorEl: HTMLElement;
-  private tpsEl: HTMLElement;
+  private txTotalEl: HTMLElement;
   private tpsBar: HTMLElement;
   private tpsBarFill: HTMLElement;
   private activityLabel: HTMLElement;
@@ -24,10 +24,11 @@ export class HUD {
     this.slotEl = this.createLabel(topLeft, 'SLOT', '—');
     this.epochEl = this.createLabel(topLeft, 'EPOCH', '—');
 
-    // Top-right: validators + TPS
+    // Top-right: validators + the chain's lifetime TRANSACTIONS (the big B-number;
+    // live TPS lives only at the bottom activity bar).
     const topRight = this.createCorner('hud-top-right', 'top: 28px; right: 28px; text-align: right;');
     this.validatorEl = this.createLabel(topRight, 'VALIDATORS', '—');
-    this.tpsEl = this.createLabel(topRight, 'TPS', '—');
+    this.txTotalEl = this.createLabel(topRight, 'TRANSACTIONS', '—');
 
     // Bottom-center: TPS bar
     const bottomCenter = document.createElement('div');
@@ -133,8 +134,11 @@ export class HUD {
   updateTps(tps: number): void {
     this.targetTps = tps;
     this.maxTps = Math.max(this.maxTps, tps); // grow the activity-bar ceiling to the observed peak
-    // Idle/no-data → em-dash rather than a bare "0" (real mainnet never sits at 0 TPS).
-    this.tpsEl.textContent = tps >= 1 ? this.formatNumber(tps) : '—';
+  }
+
+  /** Lifetime chain transactions — the big top-right stat, formatted to B/M ('—' until known). */
+  updateTransactions(total: number): void {
+    this.txTotalEl.textContent = total >= 1 ? this.formatNumber(total) : '—';
   }
 
   update(dt: number): void {
