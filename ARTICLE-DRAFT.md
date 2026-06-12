@@ -84,4 +84,4 @@ was right. If that interests you, it's the more important story than the crystal
 
 It premieres at the Solana Summit. When you read this, it is probably still growing.
 
-*Explore it live at strata-explorer.vercel.app.*
+*Explore it live at exploresolana.art.*

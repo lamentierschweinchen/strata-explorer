@@ -4,10 +4,11 @@ Operational guide for running the piece unattended on a single gallery screen, ~
 
 ## The links (pick by context)
 
-- **Gallery / kiosk (mouse-less):** https://strata-explorer.vercel.app/?present
+- **Gallery / kiosk (mouse-less):** https://exploresolana.art/?present
   Presentation mode: the camera flies a slow narrated cinematic loop on its own, with
   captions naming what's on screen. THIS is the install URL.
-- **Interactive (a browser someone explores):** https://strata-explorer.vercel.app
+- **Interactive (a browser someone explores):** https://exploresolana.art
+- **Fallback alias (same site, if the domain ever misbehaves):** https://strata-explorer.vercel.app
   Mouse orbit, hover any crystal for its real slot's info, click a validator to fly in.
 - It's a static site on Vercel + live Solana data via Helius. Just open it in a browser.
 - A page **refresh always recovers a clean state** — first thing to try if anything looks off.
@@ -62,7 +63,7 @@ Operational guide for running the piece unattended on a single gallery screen, ~
   Next is **Sunday ~10:45**, so **none during the Saturday 10:00–20:00 window**. During the
   show, the luminous ring at the crystal's base (the epoch clock) visibly advances from
   roughly 48% to 69% — that ring closing IS the countdown to a ceremony.
-- **Rehearse on demand:** `https://strata-explorer.vercel.app/?ceremony` fires the full
+- **Rehearse on demand:** `https://exploresolana.art/?ceremony` fires the full
   ceremony once, ~5s after load. Good for showing the team or testing the venue screen.
 
 ## If something goes wrong
@@ -85,7 +86,7 @@ Operational guide for running the piece unattended on a single gallery screen, ~
 
 1. Power + network on the machine; sleep/screensaver/notifications OFF; not on battery.
 2. Chrome/Edge → `chrome://gpu` → hardware acceleration green.
-3. Open **https://strata-explorer.vercel.app/?present**
+3. Open **https://exploresolana.art/?present**
 4. Confirm: the slot number is climbing and the camera starts its slow narrated moves.
 5. Fullscreen (`F11` / `⌃⌘F`), park the mouse in a corner.
 6. **Room-hour only:** click the speaker icon once (bottom-right) → confirm sound,
