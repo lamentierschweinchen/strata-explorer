@@ -100,9 +100,13 @@ export function runAudioTest(engine: AudioEngine, opts: AudioTestOptions = {}): 
     if (missed) state.missed += 1;
 
     // New leader every 4 slots → walk the progression (sequential = a pleasing chord cycle).
+    // Each demo leader gets a position on the stage (pan) and a stake; ~8% are giants.
     if (slot % 4 === 0) {
       state.leaderIndex += 1;
       state.bar += 1;
+      const pan = Math.sin(state.leaderIndex * 2.39996) * 0.9; // golden-angle scatter, full stage
+      const stake = Math.random() < 0.08 ? 20_000_000 : Math.exp(13 + Math.random() * 2); // SOL
+      engine.setLeaderSpatial(pan, stake);
       engine.onLeaderChange(state.leaderIndex);
     }
 

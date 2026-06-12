@@ -16,13 +16,17 @@
  */
 
 import { AudioEngine } from './AudioEngine';
+import { LUKAS_MIX } from './defaultMix';
 import { mountStudio } from './StudioDesk';
 import { runAudioTest, type AudioTestHandle, type AudioTestState } from './runAudioTest';
 import { LiveSolanaData } from '../data/LiveData';
 import { SimulationEngine } from '../data/SimulationEngine';
 import type { SolanaDataSource } from '../data/DataSource';
+import { CONFIG } from '../utils/config';
 
-const engine = new AudioEngine();
+// Bed-free by owner's call (matches the gallery wiring in main.ts): the piece runs purely on the
+// chain-reactive layers — a fixed-pitch bed would clash once the epoch calendar modulates the key.
+const engine = new AudioEngine({ bedUrl: null });
 // Dev hook: poke the live engine from the console (strataAudio.setEQ('low', -12), .triggerSunrise(), …).
 (window as unknown as { strataAudio: AudioEngine }).strataAudio = engine;
 
@@ -76,6 +80,12 @@ async function startLive(): Promise<boolean> {
           live.slot = slot;
           engine.onSlot(slot, missed);
           const idx = ds.getCurrentLeaderIndex();
+          const v = ds.getValidator(idx);
+          // The sound follows the spotlight: pan to the leader's cloud position; giants sit deeper.
+          engine.setLeaderSpatial(
+            v ? Math.max(-1, Math.min(1, v.position.x / CONFIG.CLOUD_OUTER_RADIUS)) : 0,
+            v?.stake ?? 0,
+          );
           engine.onLeaderChange(idx); // engine dedups repeats
           if (idx !== lastLeaderIdx) {
             lastLeaderIdx = idx;
@@ -142,6 +152,10 @@ async function begin(): Promise<void> {
     console.error('[studio] start failed', e);
     return;
   }
+  // The shipped default IS Lukas' Mix — the studio opens where the gallery sounds, and
+  // the desk's faders read this state back. (Post-start on purpose: strip levels live in
+  // the graph start() just built; a pre-start apply silently skips them.)
+  engine.applyState(LUKAS_MIX);
   engine.setMuted(false);
   overlay.remove();
 

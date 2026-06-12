@@ -172,6 +172,13 @@ export const AUDIO_CONFIG = {
       dropBars: 1,
       cooldownSec: 90,
     },
+    /** ⨀ THE MILLIONTH LAYER — the slot counter crossing a 1,000,000 boundary (~every 4.6 days):
+     *  one grand bell — the deep gong under a bright tonic swell and a momentary reverb bloom.
+     *  The HUD's slot number rolls over at the same instant; sight and sound agree. */
+    milestone: {
+      enabled: true,
+      everySlots: 1_000_000,
+    },
   },
 
   /** THE ARRANGER — phrase-level musical storytelling. The CLOCK is musical convention (8-bar
@@ -238,11 +245,15 @@ export const AUDIO_CONFIG = {
     sendDelay: 0.28,
   },
 
-  /** LEADER CHANGE — the pad crossfades to the next chord on the downbeat. */
+  /** LEADER CHANGE — the pad crossfades to the next chord on the downbeat. THE GIANT'S BAR:
+   *  when the leading validator's stake is enormous (≥ giantStakeSol), its chord carries an
+   *  extra root an octave down — the heavyweights make the ground sit deeper for their bar. */
   leader: {
     padOctave: 1,
     gain: 0.16,
     velocity: 0.45,
+    giantStakeSol: 15_000_000, // ≈ the top handful of validators by stake
+    giantSubRoot: true,
     attack: 2.5,
     decay: 1.0,
     sustain: 0.8,
@@ -304,6 +315,10 @@ export const AUDIO_CONFIG = {
     intervals: { transfer: 1, defi: -2, nft: 3, stake: 0 } as Record<TxType, number>,
     leapThreshold: 3, // |interval| ≥ this is a leap → next note resolves one step back
     stakeOctaveDown: true, // stake plays an octave below the cursor — a bass answer
+    /** THE SOUND FOLLOWS THE SPOTLIGHT: the melody voices pan to the current leader's position
+     *  in the validator cloud (the same position the visual leader beam jumps to), gliding there
+     *  each bar. 0 = mono center, 1 = full orbit. */
+    spatialWidth: 0.6,
   },
 
   /** THE LEAD — a melodic line the chain advances one note per block (a music box the network
@@ -446,6 +461,7 @@ interface Graph {
   analyser: Tone.Analyser;
   limiter: Tone.Limiter;
   pumpDucks: Tone.Gain[]; // the sidechain duck nodes on the sustained layers
+  melodyPanners: Tone.Panner[]; // the melody voices' stereo position (follows the leader)
   reverbReady: Promise<void>;
 
   kick: Tone.MembraneSynth;
@@ -557,6 +573,18 @@ export class AudioEngine {
   private lastTxTime = 0;
   private lastFinalityAt = -Infinity;
 
+  // Leader spatial state: pan target (the leader's position in the cloud) + the giant flag.
+  private leaderPan = 0;
+  private leaderIsGiant = false;
+
+  // Milestone era (slot / everySlots, anchored on the first slot seen — never fires on startup).
+  private milestoneEra: number | null = null;
+  /** The last 1,000,000-boundary slot celebrated (the desk toasts it). */
+  public lastMilestoneSlot: number | null = null;
+
+  // AudioContext watchdog (gallery: external suspensions get auto-resumed).
+  private watchdogTimer: number | null = null;
+
   // ── The Arranger: phrase/section state on the leader-bar clock. The clock is musical
   // convention; the section CHOICE is the chain's (stats gathered per section, read at the turn).
   private arrSection: 'GROOVE' | 'DUB' | 'LIFT' | 'BREAK' = 'GROOVE';
@@ -616,7 +644,40 @@ export class AudioEngine {
 
     this._started = true;
     this.armAutoCycle();
+
+    // Gallery watchdog: a 10-hour installation can have its AudioContext suspended from outside
+    // (output-device changes, OS power events). We never suspend it ourselves, so any suspension
+    // is unwanted — quietly resume. Checked every few seconds; free when all is well.
+    if (this.watchdogTimer === null) {
+      this.watchdogTimer = window.setInterval(() => {
+        if (this._disposed || !this._started) return;
+        const raw = Tone.getContext().rawContext as AudioContext;
+        if (raw.state === 'suspended' || (raw.state as string) === 'interrupted') {
+          void raw.resume().catch(() => {});
+        }
+      }, 4000);
+    }
+
     void this.loadAndStartBed();
+  }
+
+  /** One-line health snapshot for soak checks (call from the console: strataAudio.getHealth()). */
+  getHealth(): {
+    contextState: string;
+    started: boolean;
+    transportSec: number;
+    key: string;
+    section: string;
+    intensity: number;
+  } {
+    return {
+      contextState: (Tone.getContext().rawContext as AudioContext).state,
+      started: this._started,
+      transportSec: Math.round(Tone.getTransport().seconds),
+      key: AUDIO_CONFIG.key.scaleName,
+      section: this.arrSection,
+      intensity: +this.intensityTarget.toFixed(2),
+    };
   }
 
   stop(): void {
@@ -650,6 +711,10 @@ export class AudioEngine {
     }
 
     Tone.getTransport().stop();
+    if (this.watchdogTimer !== null) {
+      window.clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
     this._started = false;
   }
 
@@ -689,7 +754,7 @@ export class AudioEngine {
 
   /* ── chain event sinks ─────────────────────────────────────────────────────────────────── */
 
-  onSlot(_slot: number, missed: boolean): void {
+  onSlot(slot: number, missed: boolean): void {
     const g = this.guard();
     if (!g) return;
 
@@ -745,6 +810,18 @@ export class AudioEngine {
     this.schedulePump(time); // the sustained layers duck with the kick and swell back — the pump
     this.arrStats.slots += 1;
 
+    // ⨀ THE MILLIONTH LAYER — the slot counter crosses a 1,000,000 boundary (~every 4.6 days).
+    const ms = AUDIO_CONFIG.moments.milestone;
+    if (ms.enabled && ms.everySlots > 0) {
+      const era = Math.floor(slot / ms.everySlots);
+      if (this.milestoneEra === null) {
+        this.milestoneEra = era; // anchor on the first slot seen — never fires on startup
+      } else if (era > this.milestoneEra) {
+        this.milestoneEra = era;
+        this.triggerMilestone(era * ms.everySlots);
+      }
+    }
+
     // THE EXHALE — the same slot fires an off-beat hat half a beat after its kick. Intensity
     // gates it (calm network = no hats, pure dub) and the phrase's final bar breathes (hats rest).
     const hcfg = AUDIO_CONFIG.hat;
@@ -769,6 +846,26 @@ export class AudioEngine {
     const leadEvery = Math.max(1, this.arrLeadEvery ?? AUDIO_CONFIG.lead.everySlots);
     if (AUDIO_CONFIG.lead.enabled && this.slotCount % leadEvery === 0) {
       this.stepLead();
+    }
+  }
+
+  /** Where the new leader STANDS (its position in the validator cloud, −1..1 across the stage)
+   *  and how HEAVY it is (raw stake in SOL). Call just before onLeaderChange for the same bar:
+   *  the melody voices glide to the leader's side — the sound follows the spotlight — and a
+   *  giant's chord carries a sub-octave root. Both optional; unset = centered, ordinary. */
+  setLeaderSpatial(pan: number, stakeSol = 0): void {
+    this.leaderPan = clamp(pan, -1, 1);
+    this.leaderIsGiant =
+      AUDIO_CONFIG.leader.giantSubRoot && stakeSol >= AUDIO_CONFIG.leader.giantStakeSol;
+    const g = this.graph;
+    if (!g) return;
+    const target = this.leaderPan * clamp(AUDIO_CONFIG.melody.spatialWidth, 0, 1);
+    for (const p of g.melodyPanners) {
+      try {
+        p.pan.rampTo(target, 0.5); // a glide, not a jump — the stage rotates with the schedule
+      } catch {
+        /* noop */
+      }
     }
   }
 
@@ -1224,6 +1321,29 @@ export class AudioEngine {
       if (d.subOctaveDown) {
         g.deep.triggerAttackRelease(this.degreeToFreq(0, d.octave - 1), d.dur * 1.2, time, vel * 0.8);
       }
+    } catch {
+      /* noop */
+    }
+  }
+
+  /** ⨀ THE MILLIONTH LAYER — one grand bell for a 1,000,000-slot boundary: the deep gong under a
+   *  bright tonic swell, the room blooming for a breath. The HUD's odometer rolls at the same
+   *  instant — sight and sound agree on the milestone. */
+  triggerMilestone(boundarySlot: number): void {
+    const g = this.guard();
+    if (!g) return;
+    this.lastMilestoneSlot = boundarySlot;
+    const time = this.quantize('4n');
+    try {
+      // The deep toll…
+      g.deep.triggerAttackRelease(this.degreeToFreq(0, 0), 3.5, time, 0.7);
+      g.deep.triggerAttackRelease(this.degreeToFreq(0, -1), 4, time, 0.55);
+      // …a bright tonic above it…
+      const high = [0, 4].map((d) => this.degreeToFreq(d, 2));
+      g.swell.triggerAttackRelease(high, 2.5, time, 0.4);
+      // …and the room blooms for a breath, then settles.
+      g.reverbBus.gain.rampTo(1.35, 0.6);
+      g.reverbBus.gain.rampTo(1, 6, Tone.now() + 1.5);
     } catch {
       /* noop */
     }
@@ -2056,12 +2176,14 @@ export class AudioEngine {
   private attackChord(degrees: readonly number[], time: number): void {
     if (!this.graph) return;
     const freqs = degrees.map((d) => this.degreeToFreq(d, AUDIO_CONFIG.leader.padOctave));
+    // The giant's bar: a heavyweight leader's chord carries its root an octave down.
+    if (this.leaderIsGiant) freqs.push(this.degreeToFreq(degrees[0], AUDIO_CONFIG.leader.padOctave - 1));
     try {
       this.graph.pad.triggerAttack(freqs, time, AUDIO_CONFIG.leader.velocity);
     } catch {
       /* noop */
     }
-    this.heldPad = freqs;
+    this.heldPad = freqs; // includes the sub-root, so the release lets it go too
   }
 
   private rootMidi(): number {
@@ -2150,9 +2272,13 @@ export class AudioEngine {
 
     const strips: Record<string, Strip> = {};
     const pumpDucks: Tone.Gain[] = [];
+    const melodyPanners: Tone.Panner[] = [];
     // The sustained layers breathe with the kick (the sidechain pump). One-shots are exempt.
     const PUMPED = new Set(['pad', 'texture', 'drone', 'bed']);
-    // A named channel strip: src → level (fader) [→ duck] → dry/reverb/delay sends.
+    // The melody voices sit WHERE THE LEADER STANDS — panned per bar to the leader's cloud
+    // position (the same spot the visual beam jumps to). Kick/pad/drone stay centered (the floor).
+    const PANNED = new Set(['tx_transfer', 'tx_defi', 'tx_nft', 'tx_stake', 'lead']);
+    // A named channel strip: src → level (fader) [→ duck] [→ pan] → dry/reverb/delay sends.
     const makeStrip = (
       name: string,
       src: Tone.ToneAudioNode,
@@ -2160,12 +2286,18 @@ export class AudioEngine {
     ): void => {
       const level = reg(new Tone.Gain(opt.level));
       src.connect(level);
-      let out: Tone.Gain = level;
+      let out: Tone.ToneAudioNode = level;
       if (PUMPED.has(name)) {
         const duck = reg(new Tone.Gain(1));
-        level.connect(duck);
+        out.connect(duck);
         pumpDucks.push(duck);
         out = duck;
+      }
+      if (PANNED.has(name)) {
+        const pan = reg(new Tone.Panner(0));
+        out.connect(pan);
+        melodyPanners.push(pan);
+        out = pan;
       }
       const dry = reg(new Tone.Gain(1));
       const rev = reg(new Tone.Gain(opt.reverb ?? 0));
@@ -2337,6 +2469,7 @@ export class AudioEngine {
       analyser,
       limiter,
       pumpDucks,
+      melodyPanners,
       reverbReady: reverb.ready,
       kick,
       hat,

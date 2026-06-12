@@ -138,7 +138,9 @@ function getChainAudio(strata: Strata) {
         live.slot = slot;
         engine.onSlot(slot, missed);
       },
-      onLeaderIndex: (leaderIndex) => {
+      onLeaderIndex: (leaderIndex, pan, stakeSol) => {
+        // Spatial first, so the new bar's chord knows where (and how heavy) its leader is.
+        engine.setLeaderSpatial(pan ?? 0, stakeSol ?? 0);
         engine.onLeaderChange(leaderIndex); // engine dedups repeats itself
         if (leaderIndex !== lastLeaderIdx) {
           lastLeaderIdx = leaderIndex;

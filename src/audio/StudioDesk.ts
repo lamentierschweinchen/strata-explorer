@@ -308,7 +308,8 @@ const EXPLAINER_HTML = `
   <div class="row"><b>a skipped beat</b><span>+ a hiss of static = a slot the leader missed. Several in a row and the whole floor stumbles — the kick drops out for a bar.</span></div>
   <div class="row"><b>the melody</b><span>written by transactions, one note each: transfers step up, DeFi steps down, NFTs leap, staking pulls the line home (the bassline). Louder notes are bigger transactions.</span></div>
   <div class="row"><b>a deep gong</b><span>a whale — one enormous transaction, rung once.</span></div>
-  <div class="row"><b>the chords</b><span>a new validator leads the network every 4 beats (one bar); the harmony moves with the leader schedule.</span></div>
+  <div class="row"><b>the chords</b><span>a new validator leads the network every 4 beats (one bar); the harmony moves with the leader schedule — and the melody sits where the leader stands, panning across the stage as the schedule rotates. When a giant leads (an enormous stake), its chord carries a root an octave deeper.</span></div>
+  <div class="row"><b>a great bell</b><span>the slot counter crossing a million — watch the number roll over as it tolls (~every 4½ days).</span></div>
   <div class="row"><b>the swell</b><span>finality — every ~12 seconds the chain makes its recent past irreversible, and the music resolves with it.</span></div>
   <div class="row"><b>the air</b><span>the bright hiss riding above everything is live TPS — transactions per second, as texture.</span></div>
   <div class="row"><b>the sections</b><span>every 32 bars the music re-reads the network: heating up → it builds; cooling → it strips back to dub; spending high energy → the kick vanishes… and drops.</span></div>
@@ -365,6 +366,7 @@ export function mountStudio(engine: AudioEngine, opts: StudioMountOptions = {}):
   // readout nodes (rebuilt with the desk)
   let rSlot: HTMLElement, rBar: HTMLElement, rChord: HTMLElement, rKey: HTMLElement, rTps: HTMLElement, rSun: HTMLElement, rSection: HTMLElement, iFill: HTMLElement;
   let lastSection = '';
+  let lastMilestone: number | null = null;
 
   function readBlock(node: HTMLElement, label: string): HTMLElement {
     const b = el('div', 'read');
@@ -556,6 +558,9 @@ export function mountStudio(engine: AudioEngine, opts: StudioMountOptions = {}):
     space.appendChild(slider('Reverb amount', 0, 2, 0.01, 1, fmt2, (v) => engine.setReverbAmount(v)));
     space.appendChild(slider('Delay feedback', 0, 0.92, 0.01, AUDIO_CONFIG.delay.feedback, fmt2, (v) => engine.setDelayFeedback(v)));
     space.appendChild(slider('Delay amount', 0, 2, 0.01, 1, fmt2, (v) => engine.setDelayAmount(v)));
+    space.appendChild(
+      slider('Stereo orbit (melody follows the leader)', 0, 1, 0.01, AUDIO_CONFIG.melody.spatialWidth, fmt2, (v) => (AUDIO_CONFIG.melody.spatialWidth = v)),
+    );
 
     // ── KEY — root wheel (circle of fifths) + mode. Changes land musically on the next bar. ──
     space.appendChild(el('h3', '', 'KEY — modulates on the next downbeat, drones glide'));
@@ -942,6 +947,10 @@ export function mountStudio(engine: AudioEngine, opts: StudioMountOptions = {}):
     if (arr.section !== lastSection) {
       if (lastSection !== '') showToast(`Section → ${arr.section} (${arr.reason})`);
       lastSection = arr.section;
+    }
+    if (engine.lastMilestoneSlot !== null && engine.lastMilestoneSlot !== lastMilestone) {
+      lastMilestone = engine.lastMilestoneSlot;
+      showToast(`⨀ SLOT ${lastMilestone.toLocaleString('en-US')} — the millionth layer`);
     }
     if (iFill) iFill.style.width = `${Math.round(engine.intensity * 100)}%`;
     if (rSun) {

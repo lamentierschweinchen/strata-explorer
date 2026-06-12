@@ -88,7 +88,9 @@ export class Strata {
    */
   public eventTap?: {
     onSlot?: (slot: number, missed: boolean) => void;
-    onLeaderIndex?: (leaderIndex: number) => void;
+    /** pan = the leader's x in the cloud, −1..1 (the sound follows the spotlight);
+     *  stakeSol = the leader's raw stake (a giant's chord sits an octave deeper). */
+    onLeaderIndex?: (leaderIndex: number, pan?: number, stakeSol?: number) => void;
     onTransactions?: (txs: TransactionInfo[]) => void;
     onFinality?: (rootSlot: number) => void;
     onTps?: (tps: number) => void;
@@ -295,7 +297,11 @@ export class Strata {
 
         // External tap (the ?dj audio overlay hears the same heartbeat the crystal grows by).
         this.eventTap?.onSlot?.(slot, missed);
-        this.eventTap?.onLeaderIndex?.(leaderIdx);
+        this.eventTap?.onLeaderIndex?.(
+          leaderIdx,
+          Math.max(-1, Math.min(1, leaderPos.x / CONFIG.CLOUD_OUTER_RADIUS)),
+          leaderInfo?.stake,
+        );
         this.eventTap?.onEpochProgress?.(
           epochInfo.slotIndex / Math.max(1, epochInfo.slotsInEpoch),
           epochInfo.epoch,
