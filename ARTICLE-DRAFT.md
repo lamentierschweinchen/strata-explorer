@@ -1,87 +1,55 @@
-# The Strata — article draft
+# STRATA — article draft v2
 
-> Draft for the owner's edit. Voice modeled on "The Invisible Machine." Premiering at the
-> Solana Summit. The centerpiece form is still being refined, so the prose describes it at
-> the level of "a living, growing crystal" — true across iterations. Swap in specifics once
-> the final form lands. ~750 words.
+> For the owner's edit, then Substack (or wherever). Voice modeled on "The Invisible
+> Machine." Updated for the finished piece: the score, the geode, the studio, the domain.
+> Em dashes removed per house style. ~900 words.
 
 ---
 
-## The Strata
+## STRATA
 
-### I made one of the most complex machines on Earth hold still long enough to look at.
+### I made one of the most complex machines on Earth hold still long enough to look at. Then it started singing.
 
-The internet is humanity's coordination layer, and almost none of it is visible. Behind
-every app and loading spinner, billions of interactions are routed, ordered, and settled by
-machines we never see. Blockchains are the most intricate layer of that machine yet:
-thousands of independent computers, scattered across the world, agreeing — many times a
-second, without anyone in charge — on a single shared history that no one can rewrite.
+The internet is humanity's coordination layer, and almost none of it is visible. Behind every app and loading spinner, billions of interactions are routed, ordered, and settled by machines we never see. Blockchains are the most intricate layer of that machine yet: thousands of independent computers, scattered across the world, agreeing many times a second, without anyone in charge, on a single shared history that no one can rewrite.
 
-It is genuinely astonishing engineering. And it looks, to almost everyone, like a price
-chart.
+It is genuinely astonishing engineering. And it looks, to almost everyone, like a price chart.
 
-That gap is why so few people ever feel what these systems actually are. So I built
-something to close it.
+That gap is why so few people ever feel what these systems actually are. So I built something to close it.
 
 ### A living crystal
 
-The Strata renders the Solana blockchain as a crystal that grows in real time — a structure
-you can sit with and watch think.
+STRATA renders the Solana blockchain as a crystal that grows in real time, a structure you can sit with and watch think.
 
-The metaphor isn't decoration; it comes from the architecture. Solana keeps time with a
-cryptographic clock called Proof of History — a single, unbranching chain of moments that
-never forks. A crystal is the honest shape of that: it grows in one direction, layer by
-layer, and what has hardened cannot be rewritten. Around it, the validators — nearly a
-thousand real computers, each staking the network's token as a promise of honest behavior —
-glimmer like mineral deposits. Through it all, transactions flow as drifting light.
+The metaphor isn't decoration; it comes from the architecture. Solana keeps time with a cryptographic clock called Proof of History: a single, unbranching chain of moments that never forks. A crystal is the honest shape of that. It grows in one direction, layer by layer, and what has hardened cannot be rewritten.
 
-Every fraction of a second, the network agrees on what just happened, and the crystal grows
-a little. That is Solana's heartbeat: a new block roughly every four-tenths of a second,
-the fastest of any major chain. You don't read it. You feel it.
+Every block the network produces grows one crystal, rooted in the rock it stands on. The newest growth glows; older layers settle, deepen, and harden into the dark host stone at the base: finalized, immutable, part of the history forever. A missed beat leaves a visible flaw, because that happened too. Around it, nearly a thousand real validators glimmer like mineral deposits, and live transactions drift through as colored light.
 
-### What you are looking at
+And all of it is a live feed. The slot number climbing in the corner. The lifetime transaction count ticking through the hundreds of billions. Every row of the feed links to a real signature you can verify on a block explorer. The rule for the whole piece: if you can see it, it happened.
 
-**The lights around it** are real validators. The larger and brighter, the more they've
-staked and the more the network trusts them. When one is chosen to add the next block, a
-thread of light reaches in and the crystal takes the moment in.
+### It plays itself
 
-**The drifting color** is live activity — real transactions moving through the network this
-second. Gold is value changing hands. Cyan is a trade. Purple is an NFT. Green is someone
-staking.
+Halfway through building it, the piece started making sound. Not a soundtrack: the network itself.
 
-**The crystal itself** is the record. The newest growth glows; older layers settle, deepen,
-and go dark — finalized, immutable, part of the history forever. A missed beat leaves a
-visible flaw, because that happened too.
+The kick drum is the block heartbeat, one beat per slot, about two and a half per second. The melody is written by transactions, one note each: transfers step upward, DeFi trades step down, NFTs leap, and staking walks the bassline home. A whale, one enormous transaction, lands as a single deep gong with the room ringing around it. Every twelve seconds or so, finality arrives and the music resolves with it. When the network stumbles and misses a few slots in a row, the floor drops out for a bar. You hear the machine breathe.
 
-And all of it is a live feed. The slot number climbing in the corner, the validator count,
-the transactions per second — that is the actual network, computing for the actual world,
-right now.
+Here is my favorite fact in the whole project. The piece is in the key of E, and we didn't choose E. One block every 396 milliseconds is a frequency: 2.525 Hz. Shift that frequency up five octaves, into hearing range, and it is an E. At its 400 millisecond spec the chain would sit in the crack between D sharp and E; the real network runs slightly hot, which commits it to E. The blockchain hums it. We tuned the instruments to the chain.
 
-### Blockchain is beautiful
+The longest rhythm belongs to the calendar. Every two days or so a Solana epoch ends and the validator schedule turns over. When it happens, the music builds, the harmony lifts into daylight, and the whole key steps a perfect fifth. Twelve epochs, about twenty-four days, tours all twelve keys and comes home. The blockchain has seasons now.
 
-The goal was never another dashboard. It was to close the distance between what these
-systems do and what anyone ever gets to see of them — and to do it for people who would
-never open a block explorer. My measure of success is simple: someone's parent walks past,
-slows down, and thinks *oh — that's lovely. What is it?*
+There is also a mixing desk. The mixer button opens a DJ booth right over the piece: fourteen channels of live network, faders for the heartbeat, the melody, the gong. You can mix the chain like a record, and mix links are shareable. The shipped sound is simply my mix; I signed it like anything else I make.
 
-Complex infrastructure doesn't have to be invisible. It can be made visible. And when the
-machine underneath is this intricate, it can be made beautiful.
+### What it's for
 
-### For the technically-inclined
+The goal was never another dashboard. It was to close the distance between what these systems do and what anyone ever gets to see of them, and to do it for people who would never open a block explorer. My measure of success is simple: someone's parent walks past, slows down, and thinks: oh, that's lovely. What is it?
 
-The Strata is built in Three.js with a custom WebGL pipeline. The centerpiece is rendered
-with real physically-based glass — transmission, refraction, dispersion — so the starfield
-and the validator field genuinely bend through the crystal as the camera moves; the thesis,
-made literal. The live data comes straight from Solana mainnet over a WebSocket: the slot
-heartbeat, finality, the full validator set, leader rotation, and a global sample of
-transactions, all mapped directly onto the visual. A pacing layer smooths the network's
-bursts into something that breathes; the per-block rhythm is held to the chain's real
-151-beats-per-minute pulse.
+Complex infrastructure doesn't have to be invisible. It can be made visible. It can even be made audible. And when the machine underneath is this intricate, it deserves to be beautiful.
 
-I built it with Claude Code, with no professional engineering background — just a clear
-picture of what I wanted and the patience to describe it precisely, over and over, until it
-was right. If that interests you, it's the more important story than the crystal.
+### For the technically inclined
 
-It premieres at the Solana Summit. When you read this, it is probably still growing.
+STRATA is built in Three.js with a custom WebGL pipeline. The crystals are physically based glass: transmission, refraction, dispersion, with the starfield genuinely bending through them. The host rock and every crystal rooted in it share a single noise field, so the geode grows as one specimen rather than two objects. The audio engine is Tone.js on a 151 BPM grid derived from the chain's measured slot time, driven by the same event stream as the visuals: one event bus, two senses. Live data comes straight from Solana mainnet over a WebSocket: slots, finality, the validator set, leader rotation, a global transaction sample, the epoch clock.
 
-*Explore it live at exploresolana.art.*
+I built it in days, as a two-person team: me and Claude Code. I have no professional engineering background, just a precise picture of what I wanted and the patience to describe it, over and over, until it was right. If that interests you, it is the more important story than the crystal.
+
+It premieres at the Solana Summit. When you read this, it is still growing.
+
+*Watch it grow, hear it play: [exploresolana.art](https://exploresolana.art). Mix it yourself: [exploresolana.art/studio](https://exploresolana.art/studio).*
