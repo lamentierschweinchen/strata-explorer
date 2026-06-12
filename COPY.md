@@ -35,7 +35,7 @@ Consumed by: **Design** lane (`Legend.ts`), **Wiring** lane (`main.ts` loading c
 
 ## Validator card (hover)
 > `[name]` · Committed `[stake]` SOL · Last agreed `[just now / Ns ago]` · `[Active / Offline]`
-> *Footer:* Click to fly in.
+> *Leader badge:* ★ WRITING THIS BLOCK · *Footer:* Click to approach
 
 ## Feed
 - Header: **Live transactions**

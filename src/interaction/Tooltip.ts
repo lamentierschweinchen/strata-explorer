@@ -49,7 +49,7 @@ export class Tooltip {
     const lastAgreed = agreedSecs < 2 ? 'just now' : `${Math.round(agreedSecs)}s ago`;
 
     const leaderBadge = isLeader
-      ? `<div style="color: #d4a017; font-size: 10px; font-weight: 600; margin: 4px 0 2px 0;">★ LAYING THE NEXT LAYER</div>`
+      ? `<div style="color: #d4a017; font-size: 10px; font-weight: 600; margin: 4px 0 2px 0;">★ WRITING THIS BLOCK</div>`
       : '';
 
     const statusColor = isActive ? '#4ade80' : '#ef4444';
@@ -69,7 +69,7 @@ export class Tooltip {
         <span style="text-align: right; color: ${statusColor}; font-weight: 600;">${statusText}</span>
       </div>
       <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.06); color: #4a4d56; font-size: 10px;">
-        Click to fly in
+        Click to approach
       </div>
     `;
 
