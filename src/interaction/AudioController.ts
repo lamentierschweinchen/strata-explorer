@@ -16,6 +16,10 @@ export class AudioController {
   onFirstEnable?: () => Promise<void>;
   /** Subsequent toggles: mute/unmute the running engine (set by main.ts). */
   onMuteToggle?: (muted: boolean) => void;
+  /** Mixer button: open the DJ booth over the piece (set by main.ts). */
+  onOpenStudio?: () => Promise<void>;
+
+  private mixerBtn: HTMLButtonElement;
 
   constructor() {
     this.button = document.createElement('button');
@@ -39,6 +43,41 @@ export class AudioController {
     this.button.addEventListener('click', () => void this.toggle());
     this.updateIcon();
     document.body.appendChild(this.button);
+
+    // The mixer — a quiet sibling to the speaker: live-mix the chain in the DJ booth.
+    this.mixerBtn = document.createElement('button');
+    this.mixerBtn.title = 'Live-mix the chain (DJ booth)';
+    this.mixerBtn.style.cssText = `
+      position: absolute; bottom: 28px; right: 74px;
+      width: 36px; height: 36px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.2s, opacity 1.2s ease;
+      z-index: 20;
+    `;
+    this.mixerBtn.innerHTML = `
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="2" stroke-linecap="round">
+        <line x1="5" y1="4" x2="5" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="19" y1="4" x2="19" y2="20"/>
+        <circle cx="5" cy="9" r="2.1" fill="#0a0a14"/><circle cx="12" cy="15" r="2.1" fill="#0a0a14"/><circle cx="19" cy="7" r="2.1" fill="#0a0a14"/>
+      </svg>`;
+    this.mixerBtn.addEventListener('mouseenter', () => {
+      this.mixerBtn.style.background = 'rgba(255, 255, 255, 0.1)';
+    });
+    this.mixerBtn.addEventListener('mouseleave', () => {
+      this.mixerBtn.style.background = 'rgba(255, 255, 255, 0.05)';
+    });
+    this.mixerBtn.addEventListener('click', () => void this.onOpenStudio?.());
+    document.body.appendChild(this.mixerBtn);
+  }
+
+  /** Presentation fade: the mixer is interactive chrome and bows out; the speaker stays
+   *  (the gallery room needs its one tap). */
+  setPresentation(presenting: boolean): void {
+    this.mixerBtn.style.opacity = presenting ? '0' : '';
+    this.mixerBtn.style.pointerEvents = presenting ? 'none' : '';
   }
 
   private async toggle(): Promise<void> {
@@ -118,5 +157,6 @@ export class AudioController {
 
   dispose(): void {
     this.button.remove();
+    this.mixerBtn.remove();
   }
 }

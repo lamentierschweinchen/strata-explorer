@@ -4,13 +4,15 @@ import { LiveSolanaData } from './data/LiveData';
 import type { SolanaDataSource } from './data/DataSource';
 // Type-only — erased at compile time, so the heavy tone chunk stays dynamically imported.
 import type { AudioEngine, StudioPreset } from './audio/AudioEngine';
+// The signed-off gallery mix (tiny data module — pulls no audio code into this bundle).
+import { LUKAS_MIX } from './audio/defaultMix';
 
 /**
- * The shipped sound: the engine's defaults (AUDIO_CONFIG) until the owner bakes a tuned mix.
- * To bake one: open /studio.html, tune, export the preset, paste the JSON here — the speaker
- * toggle and ?dj then start from that mix.
+ * The shipped sound: every visitor's speaker click starts from Lukas' signed-off mix
+ * (canonical object in audio/defaultMix.ts — also the desk's "Lukas' Mix" factory chip).
+ * To re-bake: tune at exploresolana.art/studio, COPY LINK or export, update defaultMix.ts.
  */
-const DEFAULT_PRESET: StudioPreset | null = null;
+const DEFAULT_PRESET: StudioPreset | null = LUKAS_MIX;
 
 /** Diegetic loading copy (canonical: COPY.md). */
 const LOADING_COPY = {
@@ -51,12 +53,17 @@ async function startWith(dataSource: SolanaDataSource): Promise<void> {
   // chain-reactive engine at the default studio settings (the click is the audio gesture),
   // later clicks mute/unmute the running engine — the transport keeps the chain's beat.
   strata.audio.onFirstEnable = async () => {
-    const { engine } = await getChainAudio(strata);
-    await engine.start();
+    const { ensureStarted, engine } = await getChainAudio(strata);
+    await ensureStarted();
     engine.setMuted(false);
   };
   strata.audio.onMuteToggle = (muted) => {
     void getChainAudio(strata).then(({ engine }) => engine.setMuted(muted));
+  };
+  // The mixer button beside the speaker: opens the DJ booth right over the piece
+  // (the click is the audio gesture if sound isn't running yet).
+  strata.audio.onOpenStudio = async () => {
+    await openDjBooth(strata);
   };
 
   // ?dj — the full mixing desk overlaid on the live scene (same shared engine as the toggle).
@@ -92,6 +99,9 @@ async function startWith(dataSource: SolanaDataSource): Promise<void> {
 let chainAudio: Promise<{
   engine: AudioEngine;
   readouts: () => { slot?: number; tps?: number; bar?: number };
+  /** start() + apply the baked mix ONCE after the graph exists (strip levels live in the
+   *  graph, which start() builds — a pre-start applyState silently skips them). */
+  ensureStarted: () => Promise<void>;
 }> | null = null;
 
 function getChainAudio(strata: Strata) {
@@ -100,7 +110,17 @@ function getChainAudio(strata: Strata) {
     // Bed-free by owner's call: the piece runs purely on the programmatic chain-reactive
     // layers (pass a bedUrl here again if an ambient bed ever returns).
     const engine = new AudioEngine({ bedUrl: null });
+    // Pre-start: applies the CONFIG half of the baked mix (key/eq/etc.). The strip levels
+    // need the graph — ensureStarted() re-applies the full preset once after start().
     if (DEFAULT_PRESET) engine.applyState(DEFAULT_PRESET);
+    let primed = false;
+    const ensureStarted = async (): Promise<void> => {
+      if (!engine.started) await engine.start();
+      if (!primed) {
+        primed = true;
+        if (DEFAULT_PRESET) engine.applyState(DEFAULT_PRESET);
+      }
+    };
     (window as any).strataAudio = engine; // console hook, same as the standalone studio
 
     // Live readouts for the desk header, fed by the tap below.
@@ -142,9 +162,27 @@ function getChainAudio(strata: Strata) {
       onEpochRollover: () => engine.triggerSunrise(),
     };
 
-    return { engine, readouts: () => live };
+    return { engine, readouts: () => live, ensureStarted };
   })();
   return chainAudio;
+}
+
+/**
+ * The DJ booth, opened from the mixer button: ensure the shared engine is running
+ * (the click that got us here is the gesture), then mount the desk over the piece.
+ */
+let deskHandle: { destroy(): void } | null = null;
+async function openDjBooth(strata: Strata): Promise<void> {
+  if (deskHandle) return; // one desk at a time
+  const [{ engine, readouts, ensureStarted }, { mountStudio }] = await Promise.all([
+    getChainAudio(strata),
+    import('./audio/StudioDesk'),
+  ]);
+  if (!engine.started) {
+    await ensureStarted();
+    engine.setMuted(false);
+  }
+  deskHandle = mountStudio(engine, { overlay: true, readouts, sourceLabel: 'LIVE' });
 }
 
 /**
@@ -152,7 +190,7 @@ function getChainAudio(strata: Strata) {
  * speaker toggle. Sound still starts behind a user gesture (the pill, or the toggle).
  */
 async function mountDjMode(strata: Strata): Promise<void> {
-  const [{ engine, readouts }, { mountStudio }] = await Promise.all([
+  const [{ engine, readouts, ensureStarted }, { mountStudio }] = await Promise.all([
     getChainAudio(strata),
     import('./audio/StudioDesk'),
   ]);
@@ -167,7 +205,7 @@ async function mountDjMode(strata: Strata): Promise<void> {
   pill.addEventListener('click', () => {
     void (async () => {
       try {
-        await engine.start();
+        await ensureStarted();
         engine.setMuted(false);
         pill.remove();
         mountStudio(engine, { overlay: true, readouts });

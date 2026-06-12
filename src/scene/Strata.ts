@@ -346,6 +346,7 @@ export class Strata {
     if (!this.keepChrome) {
       this.infoOverlay.setPresentation(presenting);
       this.legend.setPresentation(presenting);
+      this.audioController.setPresentation(presenting); // mixer fades; the speaker stays
     }
     this.container.style.cursor = presenting ? 'none' : '';
   }
