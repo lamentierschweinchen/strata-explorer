@@ -71,7 +71,7 @@ export class Tooltip {
         <span style="text-align: right; color: ${statusColor}; font-weight: 600;">${statusText}</span>
       </div>
       <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.06); color: #4a4d56; font-size: 10px;">
-        Click to inspect · Phase 5
+        Click to fly in
       </div>
     `;
 
