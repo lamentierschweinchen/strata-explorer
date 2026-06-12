@@ -116,7 +116,11 @@ export class Strata {
       powerPreference: 'high-performance',
     });
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Venue-GPU safety valve: ?dpr=1 (or 1.5) caps the render resolution if the
+    // gallery machine struggles — the fix is a URL edit, not on-site code surgery.
+    const dprParam = Number(new URLSearchParams(window.location.search).get('dpr'));
+    const dprCap = Number.isFinite(dprParam) && dprParam >= 0.5 && dprParam <= 3 ? dprParam : 2;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, dprCap));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
     container.appendChild(this.renderer.domElement);
@@ -137,7 +141,9 @@ export class Strata {
     this.cameraController = new CameraController(this.camera, this.renderer.domElement);
 
     // DESIGN LANE: far twinkling star-shell — added first so it sits behind everything.
-    this.starfield = new Starfield();
+    // ?stars=N (venue valve) caps the shell's point count on a struggling GPU.
+    const starsParam = Number(new URLSearchParams(window.location.search).get('stars'));
+    this.starfield = new Starfield(Number.isFinite(starsParam) && starsParam > 0 ? starsParam : undefined);
     this.scene.add(this.starfield.points);
 
     // Background

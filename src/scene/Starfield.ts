@@ -12,8 +12,12 @@ export class Starfield {
   readonly points: THREE.Points;
   private material: THREE.ShaderMaterial;
 
-  constructor() {
-    const count = CONFIG.STAR_COUNT;
+  constructor(countOverride?: number) {
+    // Optional cap (the ?stars=N venue valve) — additive; default stays CONFIG.
+    const count =
+      countOverride !== undefined && countOverride >= 1000 && countOverride <= CONFIG.STAR_COUNT
+        ? Math.floor(countOverride)
+        : CONFIG.STAR_COUNT;
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
     const sizes = new Float32Array(count);
