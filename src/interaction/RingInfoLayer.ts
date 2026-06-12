@@ -339,7 +339,7 @@ export class RingInfoLayer {
 
     // Line 2 — the plain-language state, or the flaw.
     this.bodyEl.textContent = d.missed
-      ? 'A skipped beat. The network missed this moment.'
+      ? 'A skipped beat'
       : RingInfoLayer.zoneLine(d);
     this.bodyEl.style.color = d.missed ? 'rgba(228,228,240,0.6)' : 'rgba(255,255,255,0.74)';
 
@@ -358,7 +358,7 @@ export class RingInfoLayer {
 
   /** Map the crystal's zone to one human line. */
   private static zoneLine(d: CrystalFacts): string {
-    if (d.finalized || d.zone === 'matrix') return 'Finalized forever. It can never change again.';
+    if (d.finalized || d.zone === 'matrix') return 'Finalized forever';
     switch (d.zone) {
       case 'nucleating':
       case 'young':

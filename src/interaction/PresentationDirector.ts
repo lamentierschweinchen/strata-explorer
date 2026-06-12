@@ -108,7 +108,7 @@ const SHOTS: readonly Shot[] = [
     name: 'settle-tail', look: 'tailFade',
     radius: 124, height: -16, azOffset: 0.10, azAdvance: 0.16,
     moveBars: 4, holdBars: 2,
-    captions: ['The oldest harden into rock. They can never change again.'],
+    captions: ['The oldest harden into rock.'],
   },
   {
     name: 'pull-wide', look: 'brightCentroid',

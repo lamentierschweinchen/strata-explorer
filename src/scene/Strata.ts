@@ -93,6 +93,9 @@ export class Strata {
     onFinality?: (rootSlot: number) => void;
     onTps?: (tps: number) => void;
     onEpochProgress?: (p01: number) => void;
+    /** The rare big moment (real rollover or the ?ceremony rehearsal) — the audio
+     *  side answers the golden waves with its own sunrise build. */
+    onEpochRollover?: () => void;
   };
 
   static async create(container: HTMLElement, dataSource: SolanaDataSource): Promise<Strata> {
@@ -346,6 +349,7 @@ export class Strata {
     this.seismicWave.spawnGrand(this.crystalAxis.getGrowthPointY());
     this.postProcessing.pulseBloom(CONFIG.EPOCH_BLOOM_BOOST);
     this.hud.epochCeremony();
+    this.eventTap?.onEpochRollover?.(); // the musical sunrise answers the visual ceremony
   }
 
   /** Preview/rehearsal hook (?ceremony URL param): same choreography, on demand. */

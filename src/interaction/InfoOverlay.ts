@@ -67,8 +67,9 @@ export class InfoOverlay {
   private txQueue: TransactionInfo[] = [];
   private refreshTimer = 0;
 
-  // Visibility
-  private visible = true;
+  // Visibility — the DEFAULT VIEW IS CLEAN (Galaxy of Nodes model): no feed, no leader
+  // label, just the piece. The "i" button (all screen sizes) reveals the info chrome.
+  private visible = false;
   // Presentation fade active — blocks the per-frame leader-label opacity writes
   // in update()/setLeader() from overriding the faded state.
   private presenting = false;
@@ -79,46 +80,44 @@ export class InfoOverlay {
   constructor() {
     this.hud = document.getElementById('hud')!;
 
-    // On phones the feed defaults hidden and the "i" button reveals it (Galaxy pattern). On
-    // desktop / the gallery screen the feed is always visible, so the toggle is superfluous —
-    // and a lone "i" at top-center controlling a panel on the far right edge just reads as a
-    // dead control. So the button exists on mobile only.
+    // The default view is the artwork alone (Galaxy of Nodes model): the info chrome —
+    // live transaction feed + leader label — is hidden until the "i" button reveals it.
+    // One model on every screen size, so the "i" makes sense everywhere.
     const mobile = window.innerWidth <= 768;
 
-    // --- Toggle button (mobile only) ---
-    if (mobile) {
-      this.toggleBtn = document.createElement('div');
-      Object.assign(this.toggleBtn.style, {
-        position: 'absolute',
-        top: '12px',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        width: '32px',
-        height: '32px',
-        borderRadius: '50%',
-        background: GLASS_BG,
-        backdropFilter: GLASS_BLUR,
-        WebkitBackdropFilter: GLASS_BLUR,
-        border: `1px solid ${GLASS_BORDER}`,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        cursor: 'pointer',
-        zIndex: '15',
-        fontFamily: 'serif',
-        fontStyle: 'italic',
-        fontSize: '16px',
-        color: 'rgba(255,255,255,0.7)',
-        userSelect: 'none',
-      });
-      this.toggleBtn.textContent = 'i';
-      this.toggleBtn.title = 'Show live transactions';
-      this.hud.appendChild(this.toggleBtn);
+    // --- Toggle button (all sizes) ---
+    this.toggleBtn = document.createElement('div');
+    Object.assign(this.toggleBtn.style, {
+      position: 'absolute',
+      top: '12px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      width: '32px',
+      height: '32px',
+      borderRadius: '50%',
+      background: GLASS_BG,
+      backdropFilter: GLASS_BLUR,
+      WebkitBackdropFilter: GLASS_BLUR,
+      border: `1px solid ${GLASS_BORDER}`,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      cursor: 'pointer',
+      zIndex: '15',
+      fontFamily: 'serif',
+      fontStyle: 'italic',
+      fontSize: '16px',
+      color: 'rgba(255,255,255,0.7)',
+      userSelect: 'none',
+      transition: 'border-color 0.2s ease, color 0.2s ease',
+    });
+    this.toggleBtn.textContent = 'i';
+    this.toggleBtn.title = 'Network info: live transactions and the current leader';
+    this.hud.appendChild(this.toggleBtn);
 
-      const bound = () => this.toggle();
-      this.boundToggle = bound;
-      this.toggleBtn.addEventListener('click', bound);
-    }
+    const bound = () => this.toggle();
+    this.boundToggle = bound;
+    this.toggleBtn.addEventListener('click', bound);
 
     // --- Leader label ---
     this.leaderLabel = document.createElement('div');
@@ -159,11 +158,8 @@ export class InfoOverlay {
     });
     this.hud.appendChild(this.feedPanel);
 
-    // Mobile: start hidden — the "i" button reveals it on demand (clean default view).
-    if (mobile) {
-      this.visible = false;
-      this.feedPanel.style.display = 'none';
-    }
+    // Hidden until the "i" reveals it — the clean default view, every screen size.
+    this.feedPanel.style.display = 'none';
 
     // Feed header
     this.feedHeader = document.createElement('div');
@@ -229,6 +225,11 @@ export class InfoOverlay {
     this.visible = !this.visible;
     this.feedPanel.style.display = this.visible ? 'block' : 'none';
     this.leaderLabel.style.opacity = this.visible && this.leaderName ? '1' : '0';
+    // The button wears its state: lit while the info chrome is open.
+    if (this.toggleBtn) {
+      this.toggleBtn.style.borderColor = this.visible ? 'rgba(255,255,255,0.5)' : GLASS_BORDER;
+      this.toggleBtn.style.color = this.visible ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.7)';
+    }
   }
 
   private setFilter(type: string): void {

@@ -97,7 +97,9 @@ let chainAudio: Promise<{
 function getChainAudio(strata: Strata) {
   chainAudio ??= (async () => {
     const { AudioEngine } = await import('./audio/AudioEngine');
-    const engine = new AudioEngine();
+    // Bed-free by owner's call: the piece runs purely on the programmatic chain-reactive
+    // layers (pass a bedUrl here again if an ambient bed ever returns).
+    const engine = new AudioEngine({ bedUrl: null });
     if (DEFAULT_PRESET) engine.applyState(DEFAULT_PRESET);
     (window as any).strataAudio = engine; // console hook, same as the standalone studio
 
@@ -135,6 +137,9 @@ function getChainAudio(strata: Strata) {
         engine.setActivity(tps);
       },
       onEpochProgress: (p01) => engine.onEpochProgress(p01),
+      // Epoch rollover (or ?ceremony rehearsal): the engine's sunrise — build, bright
+      // lift, back to dark — answers the golden waves. No-op until start()ed.
+      onEpochRollover: () => engine.triggerSunrise(),
     };
 
     return { engine, readouts: () => live };
