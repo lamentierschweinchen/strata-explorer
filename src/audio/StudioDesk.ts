@@ -304,7 +304,7 @@ const EXPLAINER_HTML = `
   <span class="x">✕</span>
   <h1>HOW TO HEAR THE STRATA</h1>
   <div class="sub">Every sound is a real event on Solana, happening now. Nothing is looped, nothing is faked.</div>
-  <div class="row"><b>the kick</b><span>a block (a “slot”), ~2.5 per second — the network's heartbeat. The off-beat hat is the same block's exhale; it fades in as the network gets busy.</span></div>
+  <div class="row"><b>the kick</b><span>a block (a “slot”), ~2.5 per second — the network's heartbeat, locked to the beat. The off-beat hat is the same block's exhale; it fades in as the network gets busy. The occasional <i>double</i>-kick is a surplus block: two blocks sharing one beat, the second landing as a pickup.</span></div>
   <div class="row"><b>a skipped beat</b><span>+ a hiss of static = a slot the leader missed. Several in a row and the whole floor stumbles — the kick drops out for a bar.</span></div>
   <div class="row"><b>the melody</b><span>written by transactions, one note each: transfers step up, DeFi steps down, NFTs leap, staking pulls the line home (the bassline). Louder notes are bigger transactions.</span></div>
   <div class="row"><b>a deep gong</b><span>a whale — one enormous transaction, rung once.</span></div>
@@ -635,6 +635,30 @@ export function mountStudio(engine: AudioEngine, opts: StudioMountOptions = {}):
     dir.appendChild(intField);
 
     dir.appendChild(slider('Pump (sidechain depth)', 0, 0.8, 0.01, AUDIO_CONFIG.pump.depth, fmt2, (v) => engine.setPumpDepth(v)));
+
+    // The Floor: how the kick normalizes onto the grid (all honest; none invent a kick).
+    const floorField = el('div', 'field');
+    floorField.appendChild(el('label', '', 'Floor (kick normalization)'));
+    const fseg = el('div', 'seg');
+    const floorModes: Array<['locked' | 'loose' | 'raw', string, string]> = [
+      ['locked', 'Locked', 'Floor locked to the beat — surplus slots land as pickup doubles'],
+      ['loose', 'Loose', 'Floor on the 16th grid — arrival-true, the gentle limp'],
+      ['raw', 'Raw', 'Floor raw — kicks at arrival, the chain’s naked jitter'],
+    ];
+    const fBtns: HTMLButtonElement[] = [];
+    for (const [mk, lbl, toastMsg] of floorModes) {
+      const b = el('button', AUDIO_CONFIG.slot.gridMode === mk ? 'on' : '', lbl);
+      b.addEventListener('click', () => {
+        AUDIO_CONFIG.slot.gridMode = mk;
+        fBtns.forEach((x) => x.classList.remove('on'));
+        b.classList.add('on');
+        showToast(toastMsg);
+      });
+      fseg.appendChild(b);
+      fBtns.push(b);
+    }
+    floorField.appendChild(fseg);
+    dir.appendChild(floorField);
 
     // ── MOMENTS — the honest event gestures (manual triggers for tuning by ear; the live
     // detectors fire the same functions on real network behavior). ──

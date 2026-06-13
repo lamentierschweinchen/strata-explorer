@@ -8,7 +8,7 @@ literally what the engine does — see AudioEngine.ts).*
 
 | You hear | It is |
 |---|---|
-| **the kick** | a block (a "slot"), ~2.5 per second — the network's heartbeat. The off-beat hat is the same block's exhale; it fades in as the network gets busy. |
+| **the kick** | a block (a "slot"), ~2.5 per second — the network's heartbeat, locked to the beat. The off-beat hat is the same block's exhale; it fades in as the network gets busy. The occasional **double**-kick is a surplus block: two blocks sharing one beat, the second landing as a pickup before the next downbeat. |
 | **a skipped beat + a hiss** | a slot the leader missed. Several in a row and the whole floor stumbles — the kick drops out for a bar. |
 | **the melody** | written by transactions, one note each: transfers step up, DeFi steps down, NFTs leap, staking pulls the line home (the bassline). Louder notes are bigger transactions. |
 | **a deep gong** | a whale — one enormous transaction, rung once. |
@@ -20,6 +20,6 @@ literally what the engine does — see AudioEngine.ts).*
 | **the sunrise** | every ~2 days an epoch ends — the validator schedule turns over. The whole piece builds, daylight opens (the harmony lifts to major), and the key steps a perfect fifth: the network's new day, in a new light. Twelve epochs — about 24 days — tours all twelve keys and comes home. |
 | **the key** | E — derived, not chosen: one slot every 396ms is a frequency (2.525 Hz), and five octaves up, that frequency **is** an E. At its 400ms spec the chain would sit in the crack between D♯ and E; the real network runs slightly hot, which commits it to E. The blockchain hums it; we tuned to it. (A config flag can detune the whole engine −34 cents to the chain's *exact* pitch.) |
 
-**The grid is the chain's own clock**: one slot = one beat (151 BPM), one leader = one bar,
-finality ≈ an 8-bar phrase, one epoch = one key. The crystal is the network made visible.
+**The grid is the chain's own clock**: one slot = one beat (151 BPM — the chain's measured
+~397ms pulse), one leader = one bar, finality ≈ an 8-bar phrase, one epoch = one key. The crystal is the network made visible.
 This is the network made audible — the same events, the same moment, scoring itself.

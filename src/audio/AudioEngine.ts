@@ -21,9 +21,10 @@
  *     heavy kick. The Sunrise fires on the real epoch rollover (the network's "new day"), on a
  *     manual trigger (the studio's DJ button), or on a timed cycle for the dancefloor.
  *
- * THE GRID (measured Solana facts): one slot ≈ 396ms ≈ 151 BPM; one leader = 4 slots = a 1.585s
- * bar (4/4); finality ≈ 12s ≈ 7.5 bars. ONE SLOT = ONE BEAT, ONE LEADER = ONE BAR. A Tone.Transport
- * runs at 151 BPM and every event is QUANTIZED to the grid (a tiny, honest nudge).
+ * THE GRID: the chain's measured tempo — one slot ≈ 397ms ≈ 151 BPM; ONE SLOT = ONE BEAT, ONE
+ * LEADER (4 slots) = ONE BAR; finality ≈ 12s ≈ 7.5 bars. Events QUANTIZE to the grid (a tiny,
+ * honest nudge); the kick's normalization is selectable (slot.gridMode: locked / loose / raw),
+ * with surplus same-beat slots voiced as pickup double-kicks in 'locked'.
  *
  * MUSICALITY = CONSTRAINT: a fixed key (A minor; the Sunrise lifts to a bright major pentatonic);
  * notes only ever come from the scale; big reverb + dub delay; gentle, sub-heavy-but-soft. Built
@@ -43,7 +44,10 @@ export type TxType = 'transfer' | 'defi' | 'nft' | 'stake';
  * this object live, so it is intentionally a plain (mutable) object.
  * ─────────────────────────────────────────────────────────────────────────────────────────── */
 export const AUDIO_CONFIG = {
-  /** The grid. 151 BPM ⇒ one beat ≈ 396ms ≈ one slot. */
+  /** The grid: the chain's TRUE measured tempo — one slot ≈ 397ms ≈ 151 BPM, one beat per slot.
+   *  (Setting 150 = the spec's 400ms is also honest, differently: the hot-running chain then
+   *  laps the metronome ~once a minute and the surplus slots surface as regular pickup doubles.
+   *  The studio's Tempo slider is the switch.) */
   tempoBpm: 151,
 
   /** Master bus — glue compression then a brickwall limiter so it never clips over 10 hours. */
@@ -204,16 +208,29 @@ export const AUDIO_CONFIG = {
   },
 
   /** THE HEARTBEAT — a soft sub kick on each produced slot. The note tracks the key root
-   *  (setKey retunes it): home = E1 ≈ 41.2 Hz, the canonical club sub. */
+   *  (setKey retunes it): home = E1 ≈ 41.2 Hz, the canonical club sub.
+   *
+   *  THE FLOOR — three normalization options (the studio's Floor switch), all honest, none
+   *  ever inventing a kick (no slot = no kick; the hole is the network's truth):
+   *    'locked'  every kick EXACTLY on a beat (measured arrivals: median 392ms, 90% within
+   *              −80/+97ms — nearly every slot claims its own beat). A second slot arriving for
+   *              a claimed beat voices as a softer PICKUP double at doublePosition (0.75 = the
+   *              last 16th before the next downbeat — the classic drive figure); further
+   *              same-beat slots merge silently. The metronomic dance floor.
+   *    'loose'   snapped to the 16th grid: musical but arrival-true (the gentle limp).
+   *    'raw'     no grid at all — the kick fires at arrival, the chain's naked jitter. */
   slot: {
     note: 'E1',
     dur: 0.28,
     velocity: 0.8,
     gain: 0.9,
-    minGapSec: 0.06,
+    gridMode: 'locked' as 'locked' | 'loose' | 'raw',
+    minGapSec: 0.06, // the beat-claim window ('locked'/'loose') / mono retrigger guard ('raw')
+    doubleOnMerge: true, // 'locked' only: surplus same-beat slots become pickup doubles
+    doublePosition: 0.75, // where the surplus slot lands, as a fraction of the beat
+    doubleVelocity: 0.85, // × velocity — a pickup, not a flam
     pitchDecay: 0.045,
     octaves: 5,
-    quantize: '16n',
     sendReverb: 0.08,
     sendDelay: 0.0,
   },
@@ -568,6 +585,7 @@ export class AudioEngine {
 
   // Mono / throttle guards.
   private lastKickTime = 0;
+  private lastDoubleAt = 0; // the off-grid pickup slot already voiced for the current beat
   private lastHatTime = 0;
   private lastGhostTime = 0;
   private lastTxTime = 0;
@@ -797,18 +815,51 @@ export class AudioEngine {
       return;
     }
 
-    let time = this.quantize(AUDIO_CONFIG.slot.quantize);
-    time = Math.max(time, this.lastKickTime + AUDIO_CONFIG.slot.minGapSec);
-    this.lastKickTime = time;
-    // Frequency (not note-name) so the global tuning offset applies to the heartbeat too.
-    g.kick.triggerAttackRelease(
-      this.tuned(Tone.Frequency(AUDIO_CONFIG.slot.note).toFrequency()),
-      AUDIO_CONFIG.slot.dur,
-      time,
-      AUDIO_CONFIG.slot.velocity,
-    );
-    this.schedulePump(time); // the sustained layers duck with the kick and swell back — the pump
-    this.arrStats.slots += 1;
+    // THE FLOOR (config.slot.gridMode) — how the kick is normalized onto the grid:
+    //   'raw'    fire at arrival (mono guard only) — the chain's naked jitter;
+    //   'loose'  snap to the 16th grid — musical but arrival-true;
+    //   'locked' snap to the BEAT — a metronomic floor; a SECOND slot arriving for a claimed
+    //            beat voices as a softer pickup double (the surplus block, made audible), and
+    //            further same-beat slots merge silently. No mode ever invents a kick.
+    const sc = AUDIO_CONFIG.slot;
+    const mode = sc.gridMode;
+    const beatSec = 60 / AUDIO_CONFIG.tempoBpm;
+    let voicedAt: number | null = null;
+    let isDouble = false;
+    let onBeat = false; // a primary voicing (drives the pump and the hat)
+    if (mode === 'raw') {
+      const t = Tone.now() + 0.02;
+      if (t > this.lastKickTime + 0.03) {
+        voicedAt = t;
+        onBeat = true;
+        this.lastKickTime = t;
+      }
+    } else {
+      const time = this.quantize(mode === 'locked' ? '4n' : '16n');
+      if (time > this.lastKickTime + sc.minGapSec) {
+        voicedAt = time;
+        onBeat = true;
+        this.lastKickTime = time;
+      } else if (mode === 'locked' && sc.doubleOnMerge) {
+        const dbl = this.lastKickTime + beatSec * sc.doublePosition;
+        if (dbl > this.lastDoubleAt + 0.01 && dbl > Tone.now()) {
+          voicedAt = dbl;
+          isDouble = true;
+          this.lastDoubleAt = dbl;
+        }
+      }
+    }
+    if (voicedAt !== null) {
+      if (onBeat) this.schedulePump(voicedAt); // the pump breathes with primary kicks only
+      // Frequency (not note-name) so the global tuning offset applies to the heartbeat too.
+      g.kick.triggerAttackRelease(
+        this.tuned(Tone.Frequency(sc.note).toFrequency()),
+        sc.dur,
+        voicedAt,
+        sc.velocity * (isDouble ? sc.doubleVelocity : 1),
+      );
+    }
+    this.arrStats.slots += 1; // every slot counts, voiced or merged — they all happened
 
     // ⨀ THE MILLIONTH LAYER — the slot counter crosses a 1,000,000 boundary (~every 4.6 days).
     const ms = AUDIO_CONFIG.moments.milestone;
@@ -829,8 +880,8 @@ export class AudioEngine {
       AUDIO_CONFIG.arranger.enabled &&
       this.arrBarInSection % AUDIO_CONFIG.arranger.phraseBars === AUDIO_CONFIG.arranger.phraseBars - 1;
     const hatLevel = this.intensityTarget * this.arrHatMult;
-    if (hatLevel >= hcfg.minIntensity && !phraseBreath) {
-      let hatTime = time + (60 / AUDIO_CONFIG.tempoBpm) / 2;
+    if (onBeat && voicedAt !== null && hatLevel >= hcfg.minIntensity && !phraseBreath) {
+      let hatTime = voicedAt + beatSec / 2;
       hatTime = Math.max(hatTime, this.lastHatTime + hcfg.minGapSec);
       this.lastHatTime = hatTime;
       try {
