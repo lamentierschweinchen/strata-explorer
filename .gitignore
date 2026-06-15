@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-mint/
 .superpowers/
 *.local
 .DS_Store
@@ -7,3 +8,8 @@ dist/
 
 # Owner-managed local assets (fonts/palettes — possibly licensed; never commit)
 Branding/
+
+# Mint: devnet TEST keypairs / any secret material — NEVER commit (mainnet uses a wallet, no key)
+**/.secrets/
+*.keypair.json
+src/mint/scripts/.secrets/
